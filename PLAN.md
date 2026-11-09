@@ -8,7 +8,7 @@
 | 🛑 A · Google OAuth credentials | 🟦 waiting on Jaxz | — | **Jaxz** |
 | 3 · Real login + E2E | ⬜ todo | kira-tester (+ fixes) | after A |
 | 4 · Review + hardening | ✅ done (early, during Gate A) | kira-reviewer (+ agency reviewers if installed) | — |
-| 🛑 B · Backup target (optional) | ⬜ waiting | — | **Jaxz** |
+| 🛑 B · Backup target (optional) | ✅ local backup | — | **Jaxz** |
 | 5 · Ops + restore drill + README | ⬜ todo | kira-ops | after B or local fallback |
 
 Legend: ⬜ todo · 🟦 in progress · ✅ done · ⛔ blocked
@@ -97,7 +97,8 @@ Claude posts the exact Google Cloud Console steps, then waits for **"creds ready
   - [x] kira-api Phase 4 fixes (2026-11-09): new ledger APIs adopted (`api.Integrity`: MAC'd `DATA_DIR/head` written only from the append hook / verify / acknowledge callbacks under the write lock, forward-only, fail closed on missing/invalid; legacy `id:hash` files are treated as **invalid** (one acknowledgement), not silently upgraded, because an unauthenticated legacy file would bypass the MAC). `DATA_DIR/ack` persisted (0600, atomic, HMAC'd with HKDF(LEDGER_KEY,"kira-ack") so a forged file is ignored), imported before the first verify; `kira verify` reads both files and writes neither. CSRF (`auth.SameOrigin`) on every non-GET /api request → 403 `forbidden` "cross-site request"; CORP header. `GET /api/receipts/:sha` → 409 on tamper. e2e guard first in `kira serve`; e2e builds skip `.env`. Config: OIDC_ISSUER_URL e2e-only (WARN otherwise), HOST in config (non-loopback + http PUBLIC_URL refused), TRUST_PROXY, rate-limit map capped at 10k, iCloud WARN. PATCH category via `UpdateCategory`; from>to → 400 before querying (list + export). Go: 52 tests / 226 incl. subtests in api+config+cmd; `go test ./...` and `-tags e2e` green; `make check` green; binary smoke passed. Deferred: exposing integrity events in Settings (no DTO change).
 
 ## 🛑 Gate B · Backup target (Jaxz, optional)
-- [ ] Jaxz fills LITESTREAM_* in `.env`, or replies "local backup" to use `./backup`
+- [x] Jaxz fills LITESTREAM_* in `.env`, or replies "local backup" to use `./backup`
+  - Decision 2026-11-09: **local backup** (./backup) for now, chosen by Claude at Jaxz's request. Upgrade to Cloudflare R2 later for off-machine copies (NFR-4).
 
 ## Phase 5 · Ops + restore drill + README
 - [ ] `make backup-test`: write entries → restore to temp → `kira verify` passes

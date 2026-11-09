@@ -32,8 +32,9 @@ check-env: ## Validate .env (never prints values)
 dev: ensure-dist ## Go :8080 + Vite :5173 together (Ctrl-C stops both)
 	@[ -d web/node_modules ] || npm --prefix web ci
 	@mkdir -p data && chmod 700 data
+	@bash scripts/check-env.sh >/dev/null || { bash scripts/check-env.sh; echo; echo "make dev: fix the ✗ keys in .env first (the Go server refuses to start without them)."; exit 1; }
 	@trap 'kill 0' INT TERM EXIT; \
-	  go run ./cmd/kira serve & \
+	  ( go run ./cmd/kira serve || { echo; echo "make dev: Go server exited — see the error above. Stopping Vite."; kill 0; } ) & \
 	  npm --prefix web run dev & \
 	  wait
 
