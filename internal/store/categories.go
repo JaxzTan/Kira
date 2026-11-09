@@ -1,0 +1,230 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+	"unicode/utf8"
+)
+
+// MaxCategoryNameLen is the category name limit in characters (api-contract).
+const MaxCategoryNameLen = 60
+
+// Palette is the --cat-1..--cat-5 color cycle used for seeds and new categories.
+var Palette = []string{"#0F766E", "#2F6FB5", "#C2701E", "#7A5BB0", "#9AA09B"}
+
+var colorRe = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
+
+// Category mirrors api.Category.
+type Category struct {
+	ID         int64
+	Name       string
+	Color      *string
+	Icon       *string
+	ArchivedAt *string
+}
+
+// NameError is returned for an invalid category field; Field is "name" or
+// "color". It wraps ErrInvalid.
+type NameError struct {
+	Field string
+	Msg   string
+}
+
+func (e *NameError) Error() string { return e.Field + ": " + e.Msg }
+func (e *NameError) Unwrap() error { return ErrInvalid }
+
+// NormalizeCategoryName trims and validates a category name.
+func NormalizeCategoryName(name string) (string, error) {
+	n := strings.TrimSpace(name)
+	switch {
+	case !utf8.ValidString(n):
+		return "", &NameError{"name", "must be valid UTF-8"}
+	case n == "":
+		return "", &NameError{"name", "is required"}
+	case utf8.RuneCountInString(n) > MaxCategoryNameLen:
+		return "", &NameError{"name", fmt.Sprintf("must be at most %d characters", MaxCategoryNameLen)}
+	}
+	return n, nil
+}
+
+const catCols = `id, name, color, icon, archived_at`
+
+func scanCategory(sc interface{ Scan(...any) error }) (Category, error) {
+	var c Category
+	var color, icon, arch sql.NullString
+	if err := sc.Scan(&c.ID, &c.Name, &color, &icon, &arch); err != nil {
+		return c, err
+	}
+	c.Color, c.Icon, c.ArchivedAt = nullStr(color), nullStr(icon), nullStr(arch)
+	return c, nil
+}
+
+func nullStr(n sql.NullString) *string {
+	if !n.Valid {
+		return nil
+	}
+	s := n.String
+	return &s
+}
+
+// ListCategories returns categories ordered by id; archived ones only if includeArchived.
+func (s *Store) ListCategories(ctx context.Context, includeArchived bool) ([]Category, error) {
+	q := `SELECT ` + catCols + ` FROM categories`
+	if !includeArchived {
+		q += ` WHERE archived_at IS NULL`
+	}
+	rows, err := s.db.QueryContext(ctx, q+` ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list categories: %w", err)
+	}
+	defer rows.Close()
+	out := []Category{}
+	for rows.Next() {
+		c, err := scanCategory(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// GetCategory returns a category by id or ErrNotFound.
+func (s *Store) GetCategory(ctx context.Context, id int64) (Category, error) {
+	c, err := scanCategory(s.db.QueryRowContext(ctx, `SELECT `+catCols+` FROM categories WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Category{}, ErrNotFound
+	}
+	if err != nil {
+		return Category{}, fmt.Errorf("store: get category: %w", err)
+	}
+	return c, nil
+}
+
+// nameTaken reports whether another category (id != exceptID) has name,
+// compared with Unicode case folding (SQLite NOCASE only folds ASCII).
+func (s *Store) nameTaken(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, name string, exceptID int64) (bool, error) {
+	rows, err := q.QueryContext(ctx, `SELECT id, name FROM categories`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var n string
+		if err := rows.Scan(&id, &n); err != nil {
+			return false, err
+		}
+		if id != exceptID && strings.EqualFold(n, name) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+// CreateCategory adds a category. color nil picks the next palette color.
+// Errors: *NameError (ErrInvalid), ErrDuplicateName.
+func (s *Store) CreateCategory(ctx context.Context, name string, color *string) (Category, error) {
+	n, err := NormalizeCategoryName(name)
+	if err != nil {
+		return Category{}, err
+	}
+	if color != nil && !colorRe.MatchString(*color) {
+		return Category{}, &NameError{"color", "must be #RRGGBB"}
+	}
+	tx, err := s.db.BeginTx(ctx, nil) // BEGIN IMMEDIATE (DSN _txlock)
+	if err != nil {
+		return Category{}, fmt.Errorf("store: create category: %w", err)
+	}
+	defer tx.Rollback()
+	taken, err := s.nameTaken(ctx, tx, n, 0)
+	if err != nil {
+		return Category{}, fmt.Errorf("store: create category: %w", err)
+	}
+	if taken {
+		return Category{}, ErrDuplicateName
+	}
+	if color == nil {
+		var count int64
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM categories`).Scan(&count); err != nil {
+			return Category{}, err
+		}
+		c := Palette[count%int64(len(Palette))]
+		color = &c
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO categories (name, color) VALUES (?, ?)`, n, *color)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			return Category{}, ErrDuplicateName
+		}
+		return Category{}, fmt.Errorf("store: create category: %w", err)
+	}
+	id, _ := res.LastInsertId()
+	if err := tx.Commit(); err != nil {
+		return Category{}, fmt.Errorf("store: create category: %w", err)
+	}
+	return s.GetCategory(ctx, id)
+}
+
+// RenameCategory changes a category's name. Errors: ErrNotFound, *NameError, ErrDuplicateName.
+func (s *Store) RenameCategory(ctx context.Context, id int64, name string) (Category, error) {
+	n, err := NormalizeCategoryName(name)
+	if err != nil {
+		return Category{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Category{}, fmt.Errorf("store: rename category: %w", err)
+	}
+	defer tx.Rollback()
+	taken, err := s.nameTaken(ctx, tx, n, id)
+	if err != nil {
+		return Category{}, fmt.Errorf("store: rename category: %w", err)
+	}
+	if taken {
+		return Category{}, ErrDuplicateName
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE categories SET name = ? WHERE id = ?`, n, id)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			return Category{}, ErrDuplicateName
+		}
+		return Category{}, fmt.Errorf("store: rename category: %w", err)
+	}
+	if k, _ := res.RowsAffected(); k == 0 {
+		return Category{}, ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return Category{}, fmt.Errorf("store: rename category: %w", err)
+	}
+	return s.GetCategory(ctx, id)
+}
+
+// ArchiveCategory hides a category from pickers; old entries keep resolving its name.
+// Archiving an already-archived category keeps the original archived_at.
+func (s *Store) ArchiveCategory(ctx context.Context, id int64, at time.Time) (Category, error) {
+	return s.setArchived(ctx, id, `UPDATE categories SET archived_at = COALESCE(archived_at, ?) WHERE id = ?`, FormatTime(at))
+}
+
+// UnarchiveCategory makes a category selectable again.
+func (s *Store) UnarchiveCategory(ctx context.Context, id int64) (Category, error) {
+	return s.setArchived(ctx, id, `UPDATE categories SET archived_at = NULL WHERE id = ?`)
+}
+
+func (s *Store) setArchived(ctx context.Context, id int64, q string, args ...any) (Category, error) {
+	res, err := s.db.ExecContext(ctx, q, append(args, id)...)
+	if err != nil {
+		return Category{}, fmt.Errorf("store: archive category: %w", err)
+	}
+	if k, _ := res.RowsAffected(); k == 0 {
+		return Category{}, ErrNotFound
+	}
+	return s.GetCategory(ctx, id)
+}

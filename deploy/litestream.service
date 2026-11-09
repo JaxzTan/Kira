@@ -1,0 +1,21 @@
+# systemd USER unit. Install:
+#   sed "s|@REPO@|$PWD|g" deploy/litestream.service > ~/.config/systemd/user/litestream.service
+#   systemctl --user daemon-reload && systemctl --user enable --now litestream
+[Unit]
+Description=Litestream replication for Kira
+After=kira.service
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+EnvironmentFile=@REPO@/.env
+# scripts/litestream-config.sh prints the config path to use (S3/R2 vs local)
+ExecStart=/bin/bash -c 'exec litestream replicate -config "$$(@REPO@/scripts/litestream-config.sh)"'
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

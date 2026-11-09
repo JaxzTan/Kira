@@ -45,7 +45,7 @@ Every non-2xx JSON response:
 |---|---|
 | `amount_sen` | integer, `> 0` and `< 1_000_000_000` (RM 10,000,000) |
 | `occurred_on` | valid `YYYY-MM-DD`; if more than 365 days before/after today (server local date) → 422 `date_confirm_required` unless `confirm_date: true` |
-| `category_id` | existing, non-archived category |
+| `category_id` | existing, non-archived category (an amend may keep the entry's current category even if it was archived since) |
 | `method` | one of the enum |
 | `payee` | required, trimmed, 1–120 chars |
 | `note` | optional, ≤ 500 chars (empty string → `null`) |
@@ -219,13 +219,13 @@ Categories are not part of the ledger chain (entries store `category_id`); renam
 
 CSV header (exact order): `date,category,payee,method,amount_myr,note,status,entry_id,receipt_file`
 - Rows = current view in range **including voided** entries (`status` = `active` | `amended` | `voided`), ordered by date asc, id asc.
-- `amount_myr` = sen formatted as `1234.56` (no thousands separator, no currency prefix). `method` = label (e.g. `TNG eWallet`). `receipt_file` = `<sha256>.<ext>` or empty. RFC 4180 quoting. Cells beginning with `= + - @` are prefixed with `'` (CSV injection guard).
+- `amount_myr` = sen formatted as `1234.56` (no thousands separator, no currency prefix). `method` = label (e.g. `TNG eWallet`). `receipt_file` = `<sha256>.<ext>` or empty. RFC 4180 quoting, CRLF line endings. Cells beginning with `= + - @`, TAB or CR are prefixed with `'` (CSV injection guard). If a referenced receipt file is missing, `receipt_file` is the bare sha256 and the zip lists it in `MISSING_RECEIPTS.txt`.
 
 ### GET /api/ledger/verify → 200 VerifyResult (FR-13, TR-7)
-Recomputes the full chain on every call.
+Recomputes the full chain on every call, and compares against the last recorded head (`data/head`, `id:hash`, written by the server after each successful verify/append) so deleted tail rows are detected (TRD §4).
 
 ### POST /api/ledger/acknowledge → 200 VerifyResult (TR-7)
-Owner acknowledges a broken ledger; writes are re-enabled until the next failing verify at a *different* head. Derived from TR-7 ("app stays read-only until acknowledged"); no body.
+Owner acknowledges a broken ledger; writes are re-enabled. The acknowledgement covers the exact set of problems found; a later verify that finds any new or different problem blocks writes again (new valid appends do not). Derived from TR-7 ("app stays read-only until acknowledged"); no body.
 
 ## Frontend routes (design/README.md)
 `/login`, `/` (dashboard), `/entries`, `/entries/:id`, `/export`, `/settings`. Unknown paths serve `index.html` (SPA fallback) except `/api/*` and `/auth/*`.

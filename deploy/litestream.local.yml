@@ -1,0 +1,8 @@
+# Local file replica fallback (no cloud). Relative paths resolve from the repo root,
+# which is the working directory of the service/wrapper. DATA_DIR comes from env.
+dbs:
+  - path: ${DATA_DIR}/kira.db
+    replicas:
+      - type: file
+        path: ./backup/kira.db
+        sync-interval: 10s

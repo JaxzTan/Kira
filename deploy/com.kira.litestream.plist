@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent. Install (from repo root; replace @REPO@ with the absolute repo path):
+    sed "s|@REPO@|$PWD|g" deploy/com.kira.litestream.plist > ~/Library/LaunchAgents/com.kira.litestream.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.kira.litestream.plist
+  Uninstall:
+    launchctl bootout gui/$(id -u)/com.kira.litestream && rm ~/Library/LaunchAgents/com.kira.litestream.plist
+  launchd cannot read .env; the wrapper script handles it without printing values.
+  Logs: @REPO@/data/litestream.log (data/ is mode 700)
+  Note: repos under iCloud Drive may be TCC-protected; grant Full Disk Access to /bin/bash if it fails.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.kira.litestream</string>
+  <key>ProgramArguments</key>
+  <array><string>/bin/bash</string><string>@REPO@/scripts/run-litestream.sh</string></array>
+  <key>WorkingDirectory</key><string>@REPO@</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>Umask</key><integer>63</integer>
+  <key>StandardOutPath</key><string>@REPO@/data/litestream.log</string>
+  <key>StandardErrorPath</key><string>@REPO@/data/litestream.log</string>
+</dict>
+</plist>

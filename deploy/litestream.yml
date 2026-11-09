@@ -1,0 +1,11 @@
+# S3/R2 replica. Used when LITESTREAM_REPLICA_URL is set (see scripts/litestream-config.sh).
+# Litestream expands ${VAR} from the environment; no secrets live in this file.
+# LITESTREAM_REPLICA_URL e.g. s3://bucket/kira.db ; LITESTREAM_ENDPOINT e.g. https://<acct>.r2.cloudflarestorage.com
+access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
+secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
+dbs:
+  - path: ${DATA_DIR}/kira.db
+    replicas:
+      - url: ${LITESTREAM_REPLICA_URL}
+        endpoint: ${LITESTREAM_ENDPOINT}
+        sync-interval: 10s

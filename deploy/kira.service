@@ -1,0 +1,26 @@
+# systemd USER unit. Install (from repo root):
+#   mkdir -p ~/.config/systemd/user
+#   sed "s|@REPO@|$PWD|g" deploy/kira.service > ~/.config/systemd/user/kira.service
+#   systemctl --user daemon-reload && systemctl --user enable --now kira
+#   loginctl enable-linger $USER     # keep running when logged out
+# Logs: journalctl --user -u kira -f
+[Unit]
+Description=Kira expense ledger
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+EnvironmentFile=@REPO@/.env
+ExecStart=@REPO@/bin/kira serve
+Restart=always
+RestartSec=2
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+# Must match DATA_DIR in .env (default ./data)
+ReadWritePaths=@REPO@/data
+
+[Install]
+WantedBy=default.target
