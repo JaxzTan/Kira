@@ -102,7 +102,7 @@ Claude posts the exact Google Cloud Console steps, then waits for **"creds ready
 ## Phase 5 · Ops + restore drill + README
 - [ ] `make backup-test`: write entries → restore to temp → `kira verify` passes
 - [ ] install instructions for systemd (and macOS launchd note)
-- [ ] README.md (setup, Google console steps, run, backup/restore, LEDGER_KEY warning)
+- [x] README.md (setup, Google console steps, run, backup/restore, LEDGER_KEY warning)
 - [ ] final report: FR coverage table + what's deferred; commit `docs: readme`
 
 ## Cross-lane requests
