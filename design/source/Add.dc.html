@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Kira entries</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#0F766E}a:hover{color:#0B5B55}
+</style>
+</helmet>
+<div style="min-height: 100vh; background: #F6F7F5; color: #14171A; font-family: Inter, system-ui, sans-serif; display: flex; flex-wrap: wrap">
+  <aside style="flex: 1 1 220px; max-width: 260px; background: #14171A; color: #F6F7F5; padding: 24px 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 28px">
+    <div style="display: flex; align-items: center; gap: 10px; padding: 0 8px"><div style="width: 34px; height: 34px; border-radius: 10px; background: #0F766E; display: flex; align-items: center; justify-content: center; font: 700 18px 'Space Grotesk', sans-serif; color: #FFFFFF">K</div><div style="font: 700 20px 'Space Grotesk', sans-serif">Kira</div></div>
+    <nav style="display: flex; flex-direction: column; gap: 4px">
+      <sc-for list="{{nav}}" as="n" hint-placeholder-count="4"><a href="{{n.href}}" style="height: 44px; padding: 0 12px; border-radius: 10px; display: flex; align-items: center; font-size: 14px; font-weight: 500; text-decoration: none; color: {{n.fg}}; background: {{n.bg}}">{{n.label}}</a></sc-for>
+    </nav>
+  </aside>
+
+  <main style="flex: 999 1 560px; min-width: 0; padding: 32px 40px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px; max-width: 1240px">
+    <h1 style="margin: 0; font: 600 26px 'Space Grotesk', sans-serif">Entries</h1>
+
+    <section aria-label="Quick add" style="background: #FFFFFF; border: 1.5px solid #0F766E; border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; justify-content: space-between; align-items: center"><h2 style="margin: 0; font-size: 15px; font-weight: 600">Quick add</h2><div style="font-size: 12px; color: #5B6168">Tab between fields · Enter to save</div></div>
+      <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end">
+        <label style="flex: 0 1 140px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: #5B6168">Date<input type="date" value="2026-11-09" style="height: 44px; border: 1px solid #DADDD8; border-radius: 10px; padding: 0 10px; font: 500 14px Inter, sans-serif; color: #14171A"></label>
+        <label style="flex: 0 1 140px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: #5B6168">Amount (RM)<input value="45.90" style="height: 44px; border: 1px solid #DADDD8; border-radius: 10px; padding: 0 10px; font: 700 16px 'Space Grotesk', sans-serif; color: #14171A; text-align: right"></label>
+        <label style="flex: 1 1 180px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: #5B6168">Category<select style="height: 44px; border: 1px solid #DADDD8; border-radius: 10px; padding: 0 10px; font: 500 14px Inter, sans-serif; color: #14171A; background: #FFFFFF"><option>Cloud &amp; hosting</option><option>Software &amp; subscriptions</option><option>Travel &amp; transport</option><option>Meals &amp; entertainment</option><option>Hardware</option><option>Other</option></select></label>
+        <label style="flex: 1 1 160px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: #5B6168">Payee<input value="Cloudflare" style="height: 44px; border: 1px solid #DADDD8; border-radius: 10px; padding: 0 10px; font: 500 14px Inter, sans-serif; color: #14171A"></label>
+        <label style="flex: 0 1 130px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: #5B6168">Paid with<select style="height: 44px; border: 1px solid #DADDD8; border-radius: 10px; padding: 0 10px; font: 500 14px Inter, sans-serif; color: #14171A; background: #FFFFFF"><option>Card</option><option>TNG eWallet</option><option>Bank transfer</option><option>Cash</option></select></label>
+        <label style="flex: 2 1 200px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: #5B6168">Note<input placeholder="Optional" value="R2 + domain renewal" style="height: 44px; border: 1px solid #DADDD8; border-radius: 10px; padding: 0 10px; font: 500 14px Inter, sans-serif; color: #14171A"></label>
+        <button aria-label="Attach receipt" style="width: 44px; height: 44px; border: 1.5px dashed #9AA09B; border-radius: 10px; background: #FFFFFF; cursor: pointer"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#14171A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12l-8.5 8.5a5 5 0 01-7-7L14 5a3.5 3.5 0 015 5l-8.5 8.5a2 2 0 01-3-3L15 8"></path></svg></button>
+        <button style="height: 44px; padding: 0 20px; border: none; border-radius: 10px; background: #0F766E; color: #FFFFFF; font: 600 14px Inter, sans-serif; cursor: pointer">Save</button>
+      </div>
+    </section>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center">
+      <label style="flex: 1 1 240px; display: flex"><span style="position: absolute; left: -9999px">Search</span><input placeholder="Search payee or note" style="width: 100%; height: 40px; border: 1px solid #DADDD8; border-radius: 10px; padding: 0 12px; font: 400 14px Inter, sans-serif; background: #FFFFFF"></label>
+      <sc-for list="{{filters}}" as="f" hint-placeholder-count="3"><button style="height: 40px; padding: 0 14px; border: 1px solid #DADDD8; border-radius: 10px; background: #FFFFFF; font: 500 13px Inter, sans-serif; color: #14171A; cursor: pointer">{{f}}</button></sc-for>
+    </div>
+
+    <section style="background: #FFFFFF; border: 1px solid #E4E7E2; border-radius: 14px; padding: 4px 20px 8px">
+      <div style="overflow-x: auto">
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px; min-width: 720px">
+          <thead><tr style="text-align: left; color: #5B6168; font-size: 12px"><th style="padding: 12px 0; font-weight: 600">#</th><th style="font-weight: 600">Date</th><th style="font-weight: 600">Payee</th><th style="font-weight: 600">Category</th><th style="font-weight: 600">Paid with</th><th style="font-weight: 600">Receipt</th><th style="font-weight: 600; text-align: right">Amount</th></tr></thead>
+          <tbody>
+            <sc-for list="{{rows}}" as="r" hint-placeholder-count="7">
+              <tr style="border-top: 1px solid #E4E7E2; color: {{r.fg}}; text-decoration: {{r.strike}}"><td style="padding: 12px 0; color: #5B6168; font-size: 12px">{{r.id}}</td><td>{{r.date}}</td><td style="font-weight: 600"><a href="Entry.dc.html" style="color: inherit; text-decoration: inherit">{{r.payee}}</a></td><td>{{r.cat}}</td><td>{{r.method}}</td><td style="color: {{r.rcol}}; font-size: 13px">{{r.receipt}}</td><td style="text-align: right; font-weight: 600; font-variant-numeric: tabular-nums">{{r.amt}}</td></tr>
+            </sc-for>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const nav = [['Dashboard','Main.dc.html'],['Entries','Add.dc.html'],['Export','#'],['Settings','#']];
+    const ok = '#0B5B55', miss = '#B3261E';
+    const r = (id, date, payee, cat, method, receipt, amt, voided) => ({ id, date, payee, cat, method, receipt: receipt ? 'Attached' : 'Missing', rcol: receipt ? ok : miss, amt, fg: voided ? '#5B6168' : '#14171A', strike: voided ? 'line-through' : 'none' });
+    return {
+      nav: nav.map((n, i) => ({ label: n[0], href: n[1], fg: i === 1 ? '#FFFFFF' : '#B9BFBA', bg: i === 1 ? '#2A2F33' : 'transparent' })),
+      filters: ['November 2026', 'All categories', 'All methods'],
+      rows: [
+        r('#130', '9 Nov', 'Cloudflare', 'Cloud & hosting', 'Card', true, 'RM 45.90'),
+        r('#129', '9 Nov', 'Grab', 'Travel & transport', 'TNG eWallet', false, 'RM 23.40'),
+        r('#126', '8 Nov', 'GitHub Copilot (edited)', 'Software & subscriptions', 'Card', true, 'RM 44.80'),
+        r('#124', '7 Nov', 'Starbucks — voided', 'Meals & entertainment', 'Card', false, 'RM 31.50', true),
+        r('#122', '6 Nov', 'DigitalOcean', 'Cloud & hosting', 'Card', true, 'RM 112.00'),
+        r('#120', '4 Nov', 'Figma', 'Software & subscriptions', 'Card', true, 'RM 67.10'),
+        r('#118', '2 Nov', 'Shopee — USB-C hub', 'Other', 'Bank transfer', false, 'RM 89.00')
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

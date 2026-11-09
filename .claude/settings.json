@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go:*)",
+      "Bash(gofmt:*)",
+      "Bash(make:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git log:*)",
+      "Bash(bash scripts/check-env.sh)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)",
+      "Bash(sqlite3:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Bash(cat .env:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}

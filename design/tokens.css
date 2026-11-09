@@ -1,0 +1,37 @@
+/* Kira design tokens — source of truth for web/src/styles. Map into tailwind.config theme.extend. */
+:root {
+  /* surfaces */
+  --bg: #F6F7F5;          /* app background */
+  --surface: #FFFFFF;     /* cards, tables, inputs */
+  --sidebar: #14171A;     /* sidebar + login background */
+  --sidebar-active: #2A2F33;
+  --border: #E4E7E2;      /* card borders, table rules */
+  --border-strong: #DADDD8; /* inputs, buttons */
+  --track: #EEF0EC;       /* progress bar track */
+
+  /* text */
+  --text: #14171A;
+  --text-muted: #5B6168;  /* passes 4.5:1 on --bg and --surface */
+  --text-on-dark: #F6F7F5;
+  --text-on-dark-muted: #B9BFBA;
+
+  /* brand + status */
+  --accent: #0F766E;       /* primary buttons, active, verified */
+  --accent-hover: #0B5B55;
+  --accent-soft: #E3F1EE;  /* verified pill bg */
+  --accent-on-dark: #7FD3C7;
+  --danger: #B3261E;       /* void, missing receipt */
+
+  /* category palette (fixed order) */
+  --cat-1: #0F766E; --cat-2: #2F6FB5; --cat-3: #C2701E; --cat-4: #7A5BB0; --cat-5: #9AA09B;
+
+  /* type */
+  --font-body: Inter, system-ui, sans-serif;
+  --font-display: "Space Grotesk", Inter, sans-serif; /* headings + money */
+  --font-mono: "JetBrains Mono", ui-monospace, monospace; /* entry ids, hashes */
+
+  /* shape */
+  --radius-card: 14px; --radius-control: 10px; --radius-pill: 999px;
+  --control-h: 44px;  /* min hit target */
+  --sidebar-w: 240px;
+}

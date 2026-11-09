@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kira dashboard</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#0F766E}a:hover{color:#0B5B55}
+</style>
+</head>
+<body>
+<div style="min-height: 100vh; background: #F6F7F5; color: #14171A; font-family: Inter, system-ui, sans-serif; display: flex; flex-wrap: wrap">
+  <aside style="flex: 1 1 220px; max-width: 260px; background: #14171A; color: #F6F7F5; padding: 24px 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 28px">
+    <div style="display: flex; align-items: center; gap: 10px; padding: 0 8px"><div style="width: 34px; height: 34px; border-radius: 10px; background: #0F766E; display: flex; align-items: center; justify-content: center; font: 700 18px 'Space Grotesk', sans-serif; color: #FFFFFF">K</div><div style="font: 700 20px 'Space Grotesk', sans-serif">Kira</div></div>
+    <nav style="display: flex; flex-direction: column; gap: 4px">
+      <a href="dashboard.html" style="height: 44px; padding: 0 12px; border-radius: 10px; display: flex; align-items: center; font-size: 14px; font-weight: 500; text-decoration: none; color: #FFFFFF; background: #2A2F33">Dashboard</a><a href="entries.html" style="height: 44px; padding: 0 12px; border-radius: 10px; display: flex; align-items: center; font-size: 14px; font-weight: 500; text-decoration: none; color: #B9BFBA; background: transparent">Entries</a><a href="#" style="height: 44px; padding: 0 12px; border-radius: 10px; display: flex; align-items: center; font-size: 14px; font-weight: 500; text-decoration: none; color: #B9BFBA; background: transparent">Export</a><a href="#" style="height: 44px; padding: 0 12px; border-radius: 10px; display: flex; align-items: center; font-size: 14px; font-weight: 500; text-decoration: none; color: #B9BFBA; background: transparent">Settings</a>
+    </nav>
+    <div style="margin-top: auto; display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 12px; border: 1px solid #2E3337; font-size: 12px; color: #B9BFBA">
+      <div style="display: flex; align-items: center; gap: 6px; color: #7FD3C7; font-weight: 600"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6z"></path><path d="M9 12l2 2 4-4"></path></svg>Ledger verified</div>
+      <div>128 entries · head 9f1c…a03e</div>
+      <div>Last backup 12 s ago</div>
+    </div>
+  </aside>
+
+  <main style="flex: 999 1 560px; min-width: 0; padding: 32px 40px; box-sizing: border-box; display: flex; flex-direction: column; gap: 24px; max-width: 1240px">
+    <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px">
+      <div style="display: flex; align-items: center; gap: 12px">
+        <button aria-label="Previous month" style="width: 40px; height: 40px; border: 1px solid #DADDD8; border-radius: 10px; background: #FFFFFF; cursor: pointer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#14171A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg></button>
+        <h1 style="margin: 0; font: 600 26px 'Space Grotesk', sans-serif">November 2026</h1>
+        <button aria-label="Next month" style="width: 40px; height: 40px; border: 1px solid #DADDD8; border-radius: 10px; background: #FFFFFF; cursor: pointer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#14171A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></button>
+      </div>
+      <a href="entries.html" style="height: 44px; padding: 0 18px; border-radius: 12px; background: #0F766E; color: #FFFFFF; display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; text-decoration: none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Add expense<span style="font-size: 12px; opacity: 0.8; border: 1px solid rgba(255,255,255,0.4); border-radius: 6px; padding: 1px 6px">N</span></a>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px">
+      
+        <div style="background: #FFFFFF; border: 1px solid #E4E7E2; border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 6px">
+          <div style="font-size: 13px; color: #5B6168; font-weight: 500">Spent this month</div>
+          <div style="font: 700 28px 'Space Grotesk', sans-serif; letter-spacing: -0.5px">RM 1,284.50</div>
+          <div style="font-size: 12px; color: #5B6168">18 entries · 1 voided</div>
+        </div>
+      
+        <div style="background: #FFFFFF; border: 1px solid #E4E7E2; border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 6px">
+          <div style="font-size: 13px; color: #5B6168; font-weight: 500">vs October</div>
+          <div style="font: 700 28px 'Space Grotesk', sans-serif; letter-spacing: -0.5px">+12%</div>
+          <div style="font-size: 12px; color: #5B6168">RM 1,146.80 last month</div>
+        </div>
+      
+        <div style="background: #FFFFFF; border: 1px solid #E4E7E2; border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 6px">
+          <div style="font-size: 13px; color: #5B6168; font-weight: 500">Top category</div>
+          <div style="font: 700 28px 'Space Grotesk', sans-serif; letter-spacing: -0.5px">Cloud</div>
+          <div style="font-size: 12px; color: #5B6168">RM 412.00 · 32%</div>
+        </div>
+      
+        <div style="background: #FFFFFF; border: 1px solid #E4E7E2; border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 6px">
+          <div style="font-size: 13px; color: #5B6168; font-weight: 500">Missing receipts</div>
+          <div style="font: 700 28px 'Space Grotesk', sans-serif; letter-spacing: -0.5px">3</div>
+          <div style="font-size: 12px; color: #5B6168">Attach before month end</div>
+        </div>
+      
+    </div>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 16px">
+      <section style="flex: 1 1 360px; background: #FFFFFF; border: 1px solid #E4E7E2; border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 14px">
+        <h2 style="margin: 0; font-size: 15px; font-weight: 600">By category</h2>
+        
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="display: flex; justify-content: space-between; font-size: 14px"><div>Cloud &amp; hosting</div><div style="font-weight: 600; font-variant-numeric: tabular-nums">RM 412.00</div></div>
+            <div style="height: 8px; border-radius: 999px; background: #EEF0EC"><div style="height: 8px; border-radius: 999px; width: 100%; background: #0F766E"></div></div>
+          </div>
+        
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="display: flex; justify-content: space-between; font-size: 14px"><div>Software &amp; subscriptions</div><div style="font-weight: 600; font-variant-numeric: tabular-nums">RM 356.90</div></div>
+            <div style="height: 8px; border-radius: 999px; background: #EEF0EC"><div style="height: 8px; border-radius: 999px; width: 87%; background: #2F6FB5"></div></div>
+          </div>
+        
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="display: flex; justify-content: space-between; font-size: 14px"><div>Travel &amp; transport</div><div style="font-weight: 600; font-variant-numeric: tabular-nums">RM 228.40</div></div>
+            <div style="height: 8px; border-radius: 999px; background: #EEF0EC"><div style="height: 8px; border-radius: 999px; width: 55%; background: #C2701E"></div></div>
+          </div>
+        
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="display: flex; justify-content: space-between; font-size: 14px"><div>Meals &amp; entertainment</div><div style="font-weight: 600; font-variant-numeric: tabular-nums">RM 187.20</div></div>
+            <div style="height: 8px; border-radius: 999px; background: #EEF0EC"><div style="height: 8px; border-radius: 999px; width: 45%; background: #7A5BB0"></div></div>
+          </div>
+        
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="display: flex; justify-content: space-between; font-size: 14px"><div>Other</div><div style="font-weight: 600; font-variant-numeric: tabular-nums">RM 100.00</div></div>
+            <div style="height: 8px; border-radius: 999px; background: #EEF0EC"><div style="height: 8px; border-radius: 999px; width: 24%; background: #9AA09B"></div></div>
+          </div>
+        
+      </section>
+      <section style="flex: 1 1 360px; background: #FFFFFF; border: 1px solid #E4E7E2; border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 14px">
+        <h2 style="margin: 0; font-size: 15px; font-weight: 600">Last 6 months</h2>
+        <div style="display: flex; align-items: flex-end; gap: 14px; height: 200px; padding-top: 8px">
+          
+            <div style="flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end">
+              <div style="font-size: 11px; color: #5B6168; font-variant-numeric: tabular-nums">640</div>
+              <div style="width: 100%; max-width: 44px; border-radius: 8px 8px 2px 2px; height: 45%; background: #B7D9D3"></div>
+              <div style="font-size: 12px; color: #5B6168">Jun</div>
+            </div>
+          
+            <div style="flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end">
+              <div style="font-size: 11px; color: #5B6168; font-variant-numeric: tabular-nums">812</div>
+              <div style="width: 100%; max-width: 44px; border-radius: 8px 8px 2px 2px; height: 57%; background: #B7D9D3"></div>
+              <div style="font-size: 12px; color: #5B6168">Jul</div>
+            </div>
+          
+            <div style="flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end">
+              <div style="font-size: 11px; color: #5B6168; font-variant-numeric: tabular-nums">1,402</div>
+              <div style="width: 100%; max-width: 44px; border-radius: 8px 8px 2px 2px; height: 98%; background: #B7D9D3"></div>
+              <div style="font-size: 12px; color: #5B6168">Aug</div>
+            </div>
+          
+            <div style="flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end">
+              <div style="font-size: 11px; color: #5B6168; font-variant-numeric: tabular-nums">958</div>
+              <div style="width: 100%; max-width: 44px; border-radius: 8px 8px 2px 2px; height: 67%; background: #B7D9D3"></div>
+              <div style="font-size: 12px; color: #5B6168">Sep</div>
+            </div>
+          
+            <div style="flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end">
+              <div style="font-size: 11px; color: #5B6168; font-variant-numeric: tabular-nums">1,147</div>
+              <div style="width: 100%; max-width: 44px; border-radius: 8px 8px 2px 2px; height: 80%; background: #B7D9D3"></div>
+              <div style="font-size: 12px; color: #5B6168">Oct</div>
+            </div>
+          
+            <div style="flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end">
+              <div style="font-size: 11px; color: #5B6168; font-variant-numeric: tabular-nums">1,285</div>
+              <div style="width: 100%; max-width: 44px; border-radius: 8px 8px 2px 2px; height: 90%; background: #0F766E"></div>
+              <div style="font-size: 12px; color: #5B6168">Nov</div>
+            </div>
+          
+        </div>
+      </section>
+    </div>
+
+    <section style="background: #FFFFFF; border: 1px solid #E4E7E2; border-radius: 14px; padding: 8px 20px 12px; display: flex; flex-direction: column">
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 0"><h2 style="margin: 0; font-size: 15px; font-weight: 600">Recent entries</h2><a href="entries.html" style="font-size: 13px; font-weight: 600; text-decoration: none">View all</a></div>
+      <div style="overflow-x: auto">
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px; min-width: 620px">
+          <thead><tr style="text-align: left; color: #5B6168; font-size: 12px"><th style="padding: 8px 0; font-weight: 600">Date</th><th style="font-weight: 600">Payee</th><th style="font-weight: 600">Category</th><th style="font-weight: 600">Paid with</th><th style="font-weight: 600; text-align: right">Amount</th></tr></thead>
+          <tbody>
+            
+              <tr style="border-top: 1px solid #E4E7E2; color: #14171A; text-decoration: none"><td style="padding: 12px 0">9 Nov</td><td style="font-weight: 600"><a href="entry-detail.html" style="color: inherit; text-decoration: inherit">Cloudflare</a></td><td>Cloud &amp; hosting</td><td>Card</td><td style="text-align: right; font-weight: 600; font-variant-numeric: tabular-nums">RM 45.90</td></tr>
+            
+              <tr style="border-top: 1px solid #E4E7E2; color: #14171A; text-decoration: none"><td style="padding: 12px 0">9 Nov</td><td style="font-weight: 600"><a href="entry-detail.html" style="color: inherit; text-decoration: inherit">Grab</a></td><td>Travel &amp; transport</td><td>TNG eWallet</td><td style="text-align: right; font-weight: 600; font-variant-numeric: tabular-nums">RM 23.40</td></tr>
+            
+              <tr style="border-top: 1px solid #E4E7E2; color: #14171A; text-decoration: none"><td style="padding: 12px 0">8 Nov</td><td style="font-weight: 600"><a href="entry-detail.html" style="color: inherit; text-decoration: inherit">GitHub Copilot (edited)</a></td><td>Software &amp; subscriptions</td><td>Card</td><td style="text-align: right; font-weight: 600; font-variant-numeric: tabular-nums">RM 44.80</td></tr>
+            
+              <tr style="border-top: 1px solid #E4E7E2; color: #5B6168; text-decoration: line-through"><td style="padding: 12px 0">7 Nov</td><td style="font-weight: 600"><a href="entry-detail.html" style="color: inherit; text-decoration: inherit">Starbucks — voided</a></td><td>Meals &amp; entertainment</td><td>Card</td><td style="text-align: right; font-weight: 600; font-variant-numeric: tabular-nums">RM 31.50</td></tr>
+            
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+</body>
+</html>

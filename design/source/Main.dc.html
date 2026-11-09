@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Kira dashboard</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#0F766E}a:hover{color:#0B5B55}
+</style>
+</helmet>
+<div style="min-height: 100vh; background: #F6F7F5; color: #14171A; font-family: Inter, system-ui, sans-serif; display: flex; flex-wrap: wrap">
+  <aside style="flex: 1 1 220px; max-width: 260px; background: #14171A; color: #F6F7F5; padding: 24px 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 28px">
+    <div style="display: flex; align-items: center; gap: 10px; padding: 0 8px"><div style="width: 34px; height: 34px; border-radius: 10px; background: #0F766E; display: flex; align-items: center; justify-content: center; font: 700 18px 'Space Grotesk', sans-serif; color: #FFFFFF">K</div><div style="font: 700 20px 'Space Grotesk', sans-serif">Kira</div></div>
+    <nav style="display: flex; flex-direction: column; gap: 4px">
+      <sc-for list="{{nav}}" as="n" hint-placeholder-count="4"><a href="{{n.href}}" style="height: 44px; padding: 0 12px; border-radius: 10px; display: flex; align-items: center; font-size: 14px; font-weight: 500; text-decoration: none; color: {{n.fg}}; background: {{n.bg}}">{{n.label}}</a></sc-for>
+    </nav>
+    <div style="margin-top: auto; display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 12px; border: 1px solid #2E3337; font-size: 12px; color: #B9BFBA">
+      <div style="display: flex; align-items: center; gap: 6px; color: #7FD3C7; font-weight: 600"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6z"></path><path d="M9 12l2 2 4-4"></path></svg>Ledger verified</div>
+      <div>128 entries · head 9f1c…a03e</div>
+      <div>Last backup 12 s ago</div>
+    </div>
+  </aside>
+
+  <main style="flex: 999 1 560px; min-width: 0; padding: 32px 40px; box-sizing: border-box; display: flex; flex-direction: column; gap: 24px; max-width: 1240px">
+    <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px">
+      <div style="display: flex; align-items: center; gap: 12px">
+        <button aria-label="Previous month" style="width: 40px; height: 40px; border: 1px solid #DADDD8; border-radius: 10px; background: #FFFFFF; cursor: pointer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#14171A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg></button>
+        <h1 style="margin: 0; font: 600 26px 'Space Grotesk', sans-serif">November 2026</h1>
+        <button aria-label="Next month" style="width: 40px; height: 40px; border: 1px solid #DADDD8; border-radius: 10px; background: #FFFFFF; cursor: pointer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#14171A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></button>
+      </div>
+      <a href="Add.dc.html" style="height: 44px; padding: 0 18px; border-radius: 12px; background: #0F766E; color: #FFFFFF; display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; text-decoration: none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Add expense<span style="font-size: 12px; opacity: 0.8; border: 1px solid rgba(255,255,255,0.4); border-radius: 6px; padding: 1px 6px">N</span></a>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px">
+      <sc-for list="{{kpis}}" as="k" hint-placeholder-count="4">
+        <div style="background: #FFFFFF; border: 1px solid #E4E7E2; border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 6px">
+          <div style="font-size: 13px; color: #5B6168; font-weight: 500">{{k.label}}</div>
+          <div style="font: 700 28px 'Space Grotesk', sans-serif; letter-spacing: -0.5px">{{k.value}}</div>
+          <div style="font-size: 12px; color: #5B6168">{{k.sub}}</div>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 16px">
+      <section style="flex: 1 1 360px; background: #FFFFFF; border: 1px solid #E4E7E2; border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 14px">
+        <h2 style="margin: 0; font-size: 15px; font-weight: 600">By category</h2>
+        <sc-for list="{{cats}}" as="c" hint-placeholder-count="5">
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="display: flex; justify-content: space-between; font-size: 14px"><div>{{c.name}}</div><div style="font-weight: 600; font-variant-numeric: tabular-nums">{{c.amt}}</div></div>
+            <div style="height: 8px; border-radius: 999px; background: #EEF0EC"><div style="height: 8px; border-radius: 999px; width: {{c.pct}}; background: {{c.color}}"></div></div>
+          </div>
+        </sc-for>
+      </section>
+      <section style="flex: 1 1 360px; background: #FFFFFF; border: 1px solid #E4E7E2; border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 14px">
+        <h2 style="margin: 0; font-size: 15px; font-weight: 600">Last 6 months</h2>
+        <div style="display: flex; align-items: flex-end; gap: 14px; height: 200px; padding-top: 8px">
+          <sc-for list="{{trend}}" as="t" hint-placeholder-count="6">
+            <div style="flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end">
+              <div style="font-size: 11px; color: #5B6168; font-variant-numeric: tabular-nums">{{t.v}}</div>
+              <div style="width: 100%; max-width: 44px; border-radius: 8px 8px 2px 2px; height: {{t.h}}; background: {{t.color}}"></div>
+              <div style="font-size: 12px; color: #5B6168">{{t.m}}</div>
+            </div>
+          </sc-for>
+        </div>
+      </section>
+    </div>
+
+    <section style="background: #FFFFFF; border: 1px solid #E4E7E2; border-radius: 14px; padding: 8px 20px 12px; display: flex; flex-direction: column">
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 0"><h2 style="margin: 0; font-size: 15px; font-weight: 600">Recent entries</h2><a href="Add.dc.html" style="font-size: 13px; font-weight: 600; text-decoration: none">View all</a></div>
+      <div style="overflow-x: auto">
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px; min-width: 620px">
+          <thead><tr style="text-align: left; color: #5B6168; font-size: 12px"><th style="padding: 8px 0; font-weight: 600">Date</th><th style="font-weight: 600">Payee</th><th style="font-weight: 600">Category</th><th style="font-weight: 600">Paid with</th><th style="font-weight: 600; text-align: right">Amount</th></tr></thead>
+          <tbody>
+            <sc-for list="{{recent}}" as="r" hint-placeholder-count="4">
+              <tr style="border-top: 1px solid #E4E7E2; color: {{r.fg}}; text-decoration: {{r.strike}}"><td style="padding: 12px 0">{{r.date}}</td><td style="font-weight: 600"><a href="Entry.dc.html" style="color: inherit; text-decoration: inherit">{{r.payee}}</a></td><td>{{r.cat}}</td><td>{{r.method}}</td><td style="text-align: right; font-weight: 600; font-variant-numeric: tabular-nums">{{r.amt}}</td></tr>
+            </sc-for>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const nav = [['Dashboard','Main.dc.html'],['Entries','Add.dc.html'],['Export','#'],['Settings','#']];
+    return {
+      nav: nav.map((n, i) => ({ label: n[0], href: n[1], fg: i === 0 ? '#FFFFFF' : '#B9BFBA', bg: i === 0 ? '#2A2F33' : 'transparent' })),
+      kpis: [
+        { label: 'Spent this month', value: 'RM 1,284.50', sub: '18 entries · 1 voided' },
+        { label: 'vs October', value: '+12%', sub: 'RM 1,146.80 last month' },
+        { label: 'Top category', value: 'Cloud', sub: 'RM 412.00 · 32%' },
+        { label: 'Missing receipts', value: '3', sub: 'Attach before month end' }
+      ],
+      cats: [
+        { name: 'Cloud & hosting', amt: 'RM 412.00', pct: '100%', color: '#0F766E' },
+        { name: 'Software & subscriptions', amt: 'RM 356.90', pct: '87%', color: '#2F6FB5' },
+        { name: 'Travel & transport', amt: 'RM 228.40', pct: '55%', color: '#C2701E' },
+        { name: 'Meals & entertainment', amt: 'RM 187.20', pct: '45%', color: '#7A5BB0' },
+        { name: 'Other', amt: 'RM 100.00', pct: '24%', color: '#9AA09B' }
+      ],
+      trend: [
+        { m: 'Jun', v: '640', h: '45%', color: '#B7D9D3' },
+        { m: 'Jul', v: '812', h: '57%', color: '#B7D9D3' },
+        { m: 'Aug', v: '1,402', h: '98%', color: '#B7D9D3' },
+        { m: 'Sep', v: '958', h: '67%', color: '#B7D9D3' },
+        { m: 'Oct', v: '1,147', h: '80%', color: '#B7D9D3' },
+        { m: 'Nov', v: '1,285', h: '90%', color: '#0F766E' }
+      ],
+      recent: [
+        { date: '9 Nov', payee: 'Cloudflare', cat: 'Cloud & hosting', method: 'Card', amt: 'RM 45.90', fg: '#14171A', strike: 'none' },
+        { date: '9 Nov', payee: 'Grab', cat: 'Travel & transport', method: 'TNG eWallet', amt: 'RM 23.40', fg: '#14171A', strike: 'none' },
+        { date: '8 Nov', payee: 'GitHub Copilot (edited)', cat: 'Software & subscriptions', method: 'Card', amt: 'RM 44.80', fg: '#14171A', strike: 'none' },
+        { date: '7 Nov', payee: 'Starbucks — voided', cat: 'Meals & entertainment', method: 'Card', amt: 'RM 31.50', fg: '#5B6168', strike: 'line-through' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

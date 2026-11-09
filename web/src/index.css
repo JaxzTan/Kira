@@ -1,0 +1,49 @@
+@import 'tailwindcss';
+
+/* Theme mapped 1:1 from design/tokens.css (source of truth). */
+@theme {
+  --color-bg: #F6F7F5;
+  --color-surface: #FFFFFF;
+  --color-sidebar: #14171A;
+  --color-sidebar-active: #2A2F33;
+  --color-border: #E4E7E2;
+  --color-border-strong: #DADDD8;
+  --color-track: #EEF0EC;
+
+  --color-text: #14171A;
+  --color-text-muted: #5B6168;
+  --color-text-on-dark: #F6F7F5;
+  --color-text-on-dark-muted: #B9BFBA;
+
+  --color-accent: #0F766E;
+  --color-accent-hover: #0B5B55;
+  --color-accent-soft: #E3F1EE;
+  --color-accent-on-dark: #7FD3C7;
+  --color-danger: #B3261E;
+
+  --color-cat-1: #0F766E;
+  --color-cat-2: #2F6FB5;
+  --color-cat-3: #C2701E;
+  --color-cat-4: #7A5BB0;
+  --color-cat-5: #9AA09B;
+
+  --font-body: Inter, system-ui, sans-serif;
+  --font-display: "Space Grotesk", Inter, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --radius-card: 14px;
+  --radius-control: 10px;
+  --radius-pill: 999px;
+
+  --spacing-control: 44px;
+  --spacing-sidebar: 240px;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-variant-numeric: tabular-nums;
+}
