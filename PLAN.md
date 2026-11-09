@@ -4,7 +4,7 @@
 |---|---|---|---|
 | 0 · Scaffold + API contract | ✅ done | main only | — |
 | 1 · Core build | ✅ done | kira-ledger · kira-auth · kira-frontend · kira-ops | — |
-| 2 · Wire API + real frontend | ⬜ todo | kira-api → kira-frontend | — |
+| 2 · Wire API + real frontend | 🟦 in progress | kira-api → kira-frontend | — |
 | 🛑 A · Google OAuth credentials | ⬜ waiting | — | **Jaxz** |
 | 3 · Real login + E2E | ⬜ todo | kira-tester (+ fixes) | after A |
 | 4 · Review + hardening | ⬜ todo | kira-reviewer (+ agency reviewers if installed) | — |
@@ -65,8 +65,14 @@ Legend: ⬜ todo · 🟦 in progress · ✅ done · ⛔ blocked
 - [x] `deploy/kira.service`, `deploy/litestream.yml` (env-driven; local file replica fallback)
 
 ## Phase 2 · Wire API + real frontend
-- [ ] kira-api: config loading + validation, router, all handlers per contract, rate limit on /auth
-- [ ] kira-api: `bin/kira serve` and `bin/kira verify` subcommands; startup verify + head log
+- [x] kira-api: config loading + validation, router, all handlers per contract, rate limit on /auth
+  - `internal/config`: `.env` via godotenv (never overrides real env) + env; `ModeServe` needs all keys, `ModeLedger` (verify/seed) only DATA_DIR + LEDGER_KEY. Errors list every bad key, never values; `.env` parse errors are not quoted. DATA_DIR forced to 0700.
+  - `internal/api`: chi router. `/auth/*` = `auth.Routes` + 404 catch-all behind a 10/min/IP token bucket (429 `rate_limited`); IP = RemoteAddr host, X-Forwarded-For (right-most) trusted only from a loopback peer. `/api/*` = `auth.Middleware` → body limits (64 KB JSON, 11 MB multipart) + Content-Type rule (415; `/api/ledger/acknowledge` exempt) → read-only guard (423 for every POST/PATCH except acknowledge while broken+unacked). Strict JSON (unknown fields / trailing data → 400; wrong JSON type → 422 with the field). Everything else = embedded web/dist with SPA fallback (`/assets/*` immutable 1 y, rest no-cache; missing files with an extension 404). CSP/nosniff/Referrer-Policy/X-Frame-Options on all responses; receipts get a stricter CSP that still lets Chrome render PDFs.
+  - `DATA_DIR/head` (`internal/api/head.go`): written atomically (0600) after each ok verify, each append that directly extends it, and on acknowledge; never by a failed verify, so a tail deletion stays reported across restarts. `last_backup_at` = newest mtime under `./backup/kira.db` or `DATA_DIR/../backup/kira.db` (Litestream local replica), else null (e.g. remote-only replica).
+  - Tests: 34 top-level / 126 with subtests (api, config, cmd), all httptest against real store + ledger + receipts and the real auth middleware with memstore sessions.
+- [x] kira-api: `bin/kira serve` and `bin/kira verify` subcommands; startup verify + head log
+  - `kira serve`: startup `VerifyRecorded` (INFO `head=id:hash`, WARN on failure, read-only until acknowledged), listens on `127.0.0.1:PORT` (optional `HOST` override), slog JSON (text on a TTY), graceful SIGINT/SIGTERM shutdown, Read/Write/Idle/Header timeouts. `kira verify`: `ok entries=N head=id:hash` / `BROKEN at id=N reason=...` exit 1 (2 = config/DB error). `kira seed --n N [--force]` for backup-test.sh (refuses a non-empty or broken ledger).
+  - Smoke (temp env, fake Google keys): `/api/me` 401 JSON, `/` 200 index.html, `POST /auth/test-login` 404, `/entries` 200 index.html, `/assets/*.js` immutable cache, `kira verify` → `ok entries=0 head=0:000…` exit 0.
 - [ ] kira-frontend: switch from mock to real API, error states, 401 → /login
 - [ ] `make check` green; commit `feat: core app`
 
@@ -116,6 +122,10 @@ _(subagents add notes here)_
   4. An amend may keep an entry's now-archived category. Switching to an archived category is still a 422.
   5. A recorded head needs to persist somewhere for tail-deletion detection (TRD §4). Suggest kira-api/kira-ops write `data/head` (id:hash) after each verify/startup and pass it to `VerifyAgainst`.
   6. `go.mod` still marks modernc.org/sqlite `// indirect`. I did not run `go mod tidy`; orchestrator please do so at phase end.
+- **kira-api → kira-ledger**: `Acknowledge` matches the *exact* problem set. After acking a head mismatch the API records the new head (as `VerifyAgainst` docs advise), so if the same verify also found other problems (e.g. a hash mismatch at row 5), the next verify has a smaller set and re-locks writes. Suggest: treat a verify whose problems are a subset of the acknowledged set as still acknowledged. Edge case only; no workaround in the API beyond re-acknowledging.
+- **kira-api → kira-ops**: `bin/kira seed --n N [--force]` now exists and `DATA_DIR=<dir> bin/kira verify` works with only DATA_DIR + LEDGER_KEY, so the TODOs in `scripts/backup-test.sh` can be removed (the restored dir has no `head` file, which is treated as a first run). Server binds `127.0.0.1:PORT`; optional `HOST` env (e.g. `0.0.0.0`) could be documented in `.env.example`.
+- **kira-api → main (contract notes)**: (1) a JSON value of the wrong type (e.g. `"amount_sen":"45.90"`) returns 422 `validation` with that field, not 400; unknown fields and malformed/multiple JSON values are 400. (2) While the ledger is broken and unacknowledged *every* POST/PATCH under /api (categories and receipt uploads too) is 423, per TR-7 "app stays read-only". (3) Unknown `/api/*` paths are 401 without a session, 404 JSON with one (auth runs first, so routes aren't probeable). 405 under /api uses code `bad_request`. (4) `PATCH /api/categories/:id` with neither `name` nor `archived` → 400. `GET /api/export` with `from > to` → 400.
+- **kira-api → kira-frontend**: 423 `ledger_broken` can come from category create/rename/archive and receipt upload, not only entry writes; show the banner for those too.
 
 ## Log
 _(one line per phase completion)_

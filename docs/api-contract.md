@@ -227,5 +227,13 @@ Recomputes the full chain on every call, and compares against the last recorded 
 ### POST /api/ledger/acknowledge → 200 VerifyResult (TR-7)
 Owner acknowledges a broken ledger; writes are re-enabled. The acknowledgement covers the exact set of problems found; a later verify that finds any new or different problem blocks writes again (new valid appends do not). Derived from TR-7 ("app stays read-only until acknowledged"); no body.
 
+## Implementation notes (Phase 2, accepted by main)
+- A JSON field of the wrong type → 422 `validation` naming the field (not 400).
+- While the ledger is broken and unacknowledged, **every** POST/PATCH under `/api` except `/api/ledger/acknowledge` returns 423 (categories and receipt uploads too).
+- Unknown `/api/*` paths: 401 without a session, 404 with one. 405 under `/api` uses code `bad_request`.
+- Empty category PATCH, or export with `from` > `to` → 400 `bad_request`.
+- Server listens on `127.0.0.1:PORT` by default; optional `HOST` overrides.
+- `last_backup_at` = newest file mtime under the local Litestream replica (`./backup/kira.db` or `DATA_DIR/../backup/kira.db`), else null.
+
 ## Frontend routes (design/README.md)
 `/login`, `/` (dashboard), `/entries`, `/entries/:id`, `/export`, `/settings`. Unknown paths serve `index.html` (SPA fallback) except `/api/*` and `/auth/*`.
