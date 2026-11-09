@@ -85,7 +85,8 @@ Claude posts the exact Google Cloud Console steps, then waits for **"creds ready
 ## Phase 3 · Real login + E2E
 - [ ] Jaxz logs in once with real Google (Claude asks him to, then reads server logs) → owner sub pinned
 - [ ] Jaxz tries a second Google account → 403 confirmed
-- [ ] kira-tester: Playwright (`-tags e2e` build): login → add → amend → void → filter → export → verify
+- [x] kira-tester: Playwright (`-tags e2e` build): login → add → amend → void → filter → export → verify
+  - `e2e/` (config, `global-setup.ts` starts `bin/kira-e2e` on :18090 in a temp DATA_DIR/cwd with throwaway env + random keys, test-login storageState; teardown deletes it). 10 spec files / 14 tests: keyboard add (<10 s, ~0.2 s measured), amend, void, filter+search, CSV+ZIP export, ledger status, receipt, logout/401, normal build 404 on /auth/test-login (:18091), SIGKILL durability (:18092). 14/14 pass in ~6 s via `make e2e`. No product bugs found. Run: `make build && make build-e2e && make e2e` (needs a one-time `npx playwright install chromium`).
 - [ ] fix failures; commit `test: e2e`
 
 ## Phase 4 · Review + hardening
@@ -127,6 +128,8 @@ _(subagents add notes here)_
 - **kira-api → kira-ops**: `bin/kira seed --n N [--force]` now exists and `DATA_DIR=<dir> bin/kira verify` works with only DATA_DIR + LEDGER_KEY, so the TODOs in `scripts/backup-test.sh` can be removed (the restored dir has no `head` file, which is treated as a first run). Server binds `127.0.0.1:PORT`; optional `HOST` env (e.g. `0.0.0.0`) could be documented in `.env.example`.
 - **kira-api → main (contract notes)**: (1) a JSON value of the wrong type (e.g. `"amount_sen":"45.90"`) returns 422 `validation` with that field, not 400; unknown fields and malformed/multiple JSON values are 400. (2) While the ledger is broken and unacknowledged *every* POST/PATCH under /api (categories and receipt uploads too) is 423, per TR-7 "app stays read-only". (3) Unknown `/api/*` paths are 401 without a session, 404 JSON with one (auth runs first, so routes aren't probeable). 405 under /api uses code `bad_request`. (4) `PATCH /api/categories/:id` with neither `name` nor `archived` → 400. `GET /api/export` with `from > to` → 400.
 - **kira-api → kira-frontend**: 423 `ledger_broken` can come from category create/rename/archive and receipt upload, not only entry writes; show the banner for those too.
+
+- **kira-tester → kira-ops**: `make e2e` assumes the Playwright Chromium browser is installed. Please add `cd e2e && npx playwright install chromium` (idempotent) after `npm --prefix e2e ci` in the `e2e` target, otherwise a fresh machine fails with "Executable doesn't exist".
 
 ## Log
 _(one line per phase completion)_

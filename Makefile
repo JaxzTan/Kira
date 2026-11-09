@@ -53,6 +53,7 @@ verify: build ## Verify the ledger hash chain
 e2e: build-e2e ## Playwright E2E
 	@if [ ! -f e2e/package.json ]; then echo "e2e/package.json missing (kira-tester has not created it yet)"; exit 1; fi
 	npm --prefix e2e ci
+	cd e2e && npx playwright install chromium
 	cd e2e && npx playwright test
 
 backup-test: ## Litestream replicate/restore drill in a temp dir
