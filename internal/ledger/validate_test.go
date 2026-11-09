@@ -80,7 +80,12 @@ func TestValidateInput(t *testing.T) {
 		{"receipt good", func(i *Input) { i.Receipt(strings.Repeat("a", 64)) }, "", nil, nil},
 		{"receipt empty rejected", func(i *Input) { i.Receipt("") }, "receipt_sha256", nil, nil},
 		{"receipt nil ok", func(i *Input) { i.ReceiptSHA256 = nil }, "", nil, nil},
-		{"direction income rejected", func(i *Input) { i.Direction = DirectionIncome }, "direction", nil, nil},
+		{"direction income accepted (FR-9)", func(i *Input) { i.Direction = DirectionIncome }, "", nil, func(t *testing.T, out Input) {
+			if out.Direction != DirectionIncome {
+				t.Fatalf("direction = %q", out.Direction)
+			}
+		}},
+		{"direction upper", func(i *Input) { i.Direction = "INCOME" }, "direction", nil, nil},
 		{"direction expense", func(i *Input) { i.Direction = DirectionExpense }, "", nil, nil},
 		{"note trimmed", func(i *Input) { i.Note = sp("  hi \n") }, "", nil, func(t *testing.T, out Input) {
 			if out.Note == nil || *out.Note != "hi" {
@@ -155,6 +160,10 @@ func TestValidateFilterAndMonth(t *testing.T) {
 		{"status voided", Filter{Status: StatusVoided}, true},
 		{"status amended not allowed", Filter{Status: StatusAmended}, false},
 		{"neg category", Filter{CategoryID: -1}, false},
+		{"direction all", Filter{Direction: "all"}, true},
+		{"direction expense", Filter{Direction: DirectionExpense}, true},
+		{"direction income", Filter{Direction: DirectionIncome}, true},
+		{"direction bad", Filter{Direction: "refund"}, false},
 	}
 	for _, tc := range cases {
 		_, err := ValidateFilter(tc.f)

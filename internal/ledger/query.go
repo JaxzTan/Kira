@@ -116,7 +116,9 @@ func (s *Service) History(ctx context.Context, id int64) (Entry, []Row, error) {
 }
 
 // List returns current entries matching f, ordered by occurred_on desc, id desc.
-// Voided entries are included (unless filtered) but excluded from TotalSen/Count.
+// Voided entries are included (unless filtered) but excluded from the
+// totals and Count. TotalSen sums expenses, IncomeSen income, NetSen =
+// IncomeSen - TotalSen; Count covers both directions (FR-9).
 // Filter errors wrap ErrBadRequest.
 func (s *Service) List(ctx context.Context, f Filter) (ListResult, error) {
 	f, err := ValidateFilter(f)
@@ -136,6 +138,9 @@ func (s *Service) List(ctx context.Context, f Filter) (ListResult, error) {
 	}
 	if f.Method != "" {
 		conds, args = append(conds, "method = ?"), append(args, f.Method)
+	}
+	if f.Direction == DirectionExpense || f.Direction == DirectionIncome {
+		conds, args = append(conds, "direction = ?"), append(args, f.Direction)
 	}
 	switch f.Status {
 	case StatusActive:
@@ -167,9 +172,14 @@ func (s *Service) List(ctx context.Context, f Filter) (ListResult, error) {
 			res.VoidedCount++
 			continue
 		}
-		res.TotalSen += e.AmountSen
+		if e.Direction == DirectionIncome {
+			res.IncomeSen += e.AmountSen
+		} else {
+			res.TotalSen += e.AmountSen
+		}
 		res.Count++
 	}
+	res.NetSen = res.IncomeSen - res.TotalSen
 	return res, nil
 }
 
@@ -189,6 +199,11 @@ func round1(x float64) float64 { return math.Round(x*10) / 10 }
 
 // Summary computes the dashboard for month "YYYY-MM" ("" = current month,
 // server local time). Errors on a bad month wrap ErrBadRequest.
+//
+// FR-9: TotalSen, PrevMonthTotalSen, ChangePct, ByCategory and
+// MissingReceipts are expenses only; IncomeSen/PrevMonthIncomeSen are income
+// only; NetSen = IncomeSen - TotalSen; Count/VoidedCount and Recent cover
+// both directions; each Trend month carries both totals.
 func (s *Service) Summary(ctx context.Context, month string) (Summary, error) {
 	var m time.Time
 	if month == "" {
@@ -212,31 +227,35 @@ func (s *Service) Summary(ctx context.Context, month string) (Summary, error) {
 	defer tx.Rollback()
 
 	err = tx.QueryRowContext(ctx, `SELECT
-		COALESCE(SUM(CASE WHEN status <> 'voided' THEN amount_sen END), 0),
+		COALESCE(SUM(CASE WHEN status <> 'voided' AND direction = 'expense' THEN amount_sen END), 0),
+		COALESCE(SUM(CASE WHEN status <> 'voided' AND direction = 'income' THEN amount_sen END), 0),
 		COUNT(CASE WHEN status <> 'voided' THEN 1 END),
 		COUNT(CASE WHEN status = 'voided' THEN 1 END),
-		COUNT(CASE WHEN status <> 'voided' AND receipt_sha256 IS NULL THEN 1 END)
+		COUNT(CASE WHEN status <> 'voided' AND direction = 'expense' AND receipt_sha256 IS NULL THEN 1 END)
 		FROM v_current WHERE occurred_on >= ? AND occurred_on < ?`, day(start), day(end)).
-		Scan(&out.TotalSen, &out.Count, &out.VoidedCount, &out.MissingReceipts)
+		Scan(&out.TotalSen, &out.IncomeSen, &out.Count, &out.VoidedCount, &out.MissingReceipts)
 	if err != nil {
 		return Summary{}, fmt.Errorf("ledger: summary totals: %w", err)
 	}
 
 	// Trend (includes the previous month).
-	byMonth := map[string]int64{}
-	rows, err := tx.QueryContext(ctx, `SELECT substr(occurred_on, 1, 7), SUM(amount_sen) FROM v_current
+	out.NetSen = out.IncomeSen - out.TotalSen
+	byMonth := map[string]MonthTotal{}
+	rows, err := tx.QueryContext(ctx, `SELECT substr(occurred_on, 1, 7),
+		COALESCE(SUM(CASE WHEN direction = 'expense' THEN amount_sen END), 0),
+		COALESCE(SUM(CASE WHEN direction = 'income' THEN amount_sen END), 0)
+		FROM v_current
 		WHERE status <> 'voided' AND occurred_on >= ? AND occurred_on < ? GROUP BY 1`, day(trendStart), day(end))
 	if err != nil {
 		return Summary{}, fmt.Errorf("ledger: summary trend: %w", err)
 	}
 	for rows.Next() {
-		var k string
-		var v int64
-		if err := rows.Scan(&k, &v); err != nil {
+		var mt MonthTotal
+		if err := rows.Scan(&mt.Month, &mt.TotalSen, &mt.IncomeSen); err != nil {
 			rows.Close()
 			return Summary{}, err
 		}
-		byMonth[k] = v
+		byMonth[mt.Month] = mt
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -244,9 +263,12 @@ func (s *Service) Summary(ctx context.Context, month string) (Summary, error) {
 	}
 	for i := 0; i < 6; i++ {
 		k := trendStart.AddDate(0, i, 0).Format("2006-01")
-		out.Trend = append(out.Trend, MonthTotal{Month: k, TotalSen: byMonth[k]})
+		mt := byMonth[k]
+		mt.Month = k
+		out.Trend = append(out.Trend, mt)
 	}
-	out.PrevMonthTotalSen = byMonth[m.AddDate(0, -1, 0).Format("2006-01")]
+	prev := byMonth[m.AddDate(0, -1, 0).Format("2006-01")]
+	out.PrevMonthTotalSen, out.PrevMonthIncomeSen = prev.TotalSen, prev.IncomeSen
 	if out.PrevMonthTotalSen != 0 {
 		pct := round1(float64(out.TotalSen-out.PrevMonthTotalSen) * 100 / float64(out.PrevMonthTotalSen))
 		out.ChangePct = &pct
@@ -254,7 +276,7 @@ func (s *Service) Summary(ctx context.Context, month string) (Summary, error) {
 
 	rows, err = tx.QueryContext(ctx, `SELECT v.category_id, COALESCE(c.name, ''), c.color, SUM(v.amount_sen)
 		FROM v_current v LEFT JOIN categories c ON c.id = v.category_id
-		WHERE v.status <> 'voided' AND v.occurred_on >= ? AND v.occurred_on < ?
+		WHERE v.status <> 'voided' AND v.direction = 'expense' AND v.occurred_on >= ? AND v.occurred_on < ?
 		GROUP BY v.category_id`, day(start), day(end))
 	if err != nil {
 		return Summary{}, fmt.Errorf("ledger: summary categories: %w", err)

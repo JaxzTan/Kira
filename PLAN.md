@@ -106,6 +106,14 @@ Claude posts the exact Google Cloud Console steps, then waits for **"creds ready
 - [x] README.md (setup, Google console steps, run, backup/restore, LEDGER_KEY warning)
 - [ ] final report: FR coverage table + what's deferred; commit `docs: readme`
 
+## FR-9 Income (approved by Jaxz 2026-11-09)
+- [x] kira-ledger: migration `0004_income.sql`: `categories.direction` (NOT NULL DEFAULT 'expense', CHECK expense|income) plus trigger `categories_direction_immutable`. Seeds Client revenue / Product sales / Refunds & rebates / Other income (ids 11–14 on a fresh DB, after max id on an existing one). A seed whose name the owner already uses (NOCASE) is skipped. No ledger row is touched; upgrade from v3 with a live chain is tested (`TestUpgradeFromV3`).
+- [x] kira-ledger: validation accepts `income`; category must exist, be non-archived (an amend may keep its current category), and match direction. Otherwise 422 `category_id` "category is for income" / "category is for expenses", reported together with the other field errors.
+- [x] kira-ledger: List `Direction` filter + IncomeSen/NetSen; Summary income/net/prev income, trend income. Expense-only: total, change_pct, by_category, missing_receipts. Count/voided/recent cover both directions.
+- [x] kira-ledger: store category Direction (create with direction, list filter); CSV trailing `type` column.
+- [x] kira-ledger tests: 58 top-level / 311 incl. subtests across lane packages, all green; NFR-6 perf (20k rows, ~1/7 income) ≈ 92 ms worst case.
+- [ ] kira-api: adopt the changed APIs (see Cross-lane).
+
 ## Cross-lane requests
 _(subagents add notes here)_
 - **kira-auth → kira-ledger**: implement `auth.Store` (internal/auth/auth.go) in internal/store with exactly those signatures. Needs `sessions` to have `email` and `google_sub` columns (TRD §4 lacks them). `PinOwner` must be insert-once (return an error if an owner already exists). `GetSession` returns found=false (nil err) for a missing row. `DeleteSession` on `sessions` is allowed (not append-only).
@@ -154,6 +162,14 @@ _(subagents add notes here)_
 - **kira-api → kira-ops (Phase 4)**: document in `.env.example`: `TRUST_PROXY=` (set `1` behind `tailscale serve` so the /auth rate limit sees client IPs; default off) and that `HOST` other than loopback now requires an https `PUBLIC_URL` (startup refuses otherwise). `OIDC_ISSUER_URL` is ignored (WARN) in normal builds. `kira serve` logs WARN "data is in iCloud Drive; run scripts/install-macos.sh" when DATA_DIR or the loaded .env is under ~/Library/Mobile Documents (true for `make dev` from this repo). `backup-test.sh` already copies `head`; a real Litestream restore has no `head`/`ack`, so the first verify reports "head missing" and needs one acknowledgement (document in README restore steps). `kira verify` output gained ` acknowledged=true|false`.
 - **kira-api → kira-tester (Phase 4)**: every non-GET /api call needs `Sec-Fetch-Site: same-origin` (or `Origin: <PUBLIC_URL origin>`); Playwright `request` fixtures do not send it, so set `extraHTTPHeaders: {'Sec-Fetch-Site': 'same-origin'}` (or Origin) in playwright.config / `request.newContext`. bin/kira-e2e ignores `.env` and exits 2 without `KIRA_E2E=1`.
 - **kira-api → kira-frontend (Phase 4)**: `GET /api/receipts/:sha` can now return 409 `conflict` (file tampered); show "receipt file changed since upload" instead of a broken image. Integrity events are not exposed yet (deferred, no DTO).
+- **kira-ledger → kira-api (FR-9 Income)**. `internal/api` and `cmd/kira` do NOT compile until they adopt these. Changed or new exported APIs:
+  - CHANGED `store.(*Store).ListCategories(ctx, includeArchived bool, direction string) ([]Category, error)`. direction `""`/`"all"`/`"expense"`/`"income"`; anything else returns `*store.NameError{Field:"direction"}`, which maps to 400 for a query param. `cmd/kira/seed.go:85` needs `, ""`. The seed samples look categories up by name, so they stay expense.
+  - CHANGED `store.(*Store).CreateCategory(ctx, name string, color *string, direction string) (Category, error)`. `""` means expense; an invalid value returns `*store.NameError{Field:"direction"}` (422).
+  - NEW `store.Category.Direction string`, `store.DirectionExpense/DirectionIncome`, `store.ValidDirection(string) bool`. Direction is immutable: no store method changes it and a DB trigger refuses it.
+  - NEW `ledger.Filter.Direction string` (`""`/`all`/`expense`/`income`, else `ErrBadRequest`). `ledger.ListResult.IncomeSen`, `.NetSen`. `TotalSen` is expenses only. `Count` covers non-voided entries of both directions.
+  - NEW `ledger.Summary.IncomeSen`, `.NetSen`, `.PrevMonthIncomeSen`; `ledger.MonthTotal.IncomeSen`. `Summary.Count/VoidedCount` cover both directions; `TotalSen/PrevMonthTotalSen/ChangePct/ByCategory/MissingReceipts` are expenses only.
+  - NEW `ledger.ValidDirection(string) bool`. The `income` 422 on `direction` is gone. Mismatched categories return 422 `fields.category_id` "category is for income" / "category is for expenses".
+  - `export.Header` gained a trailing `type`, so it equals `dto.CSVHeader`. `internal/api/dto_test.go:41` still asserts the old header.
 
 ## Deferred
 - **Integrity events in Settings** (kira-api, Phase 4): `ledger.Service.IntegrityEvents` exists; exposing it needs a DTO/contract change (main). Not done.

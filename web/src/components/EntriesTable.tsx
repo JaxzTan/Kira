@@ -2,7 +2,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import type { Entry } from '../api/types'
 import { METHODS } from '../api/types'
 import { shortDate } from '../lib/dates'
-import { formatRM } from '../lib/money'
+import { formatIncome, formatRM } from '../lib/money'
 
 const methodLabel = (m: string) => METHODS.find((x) => x.value === m)?.label ?? m
 
@@ -48,11 +48,13 @@ export function EntriesTable({ entries, compact = false, emptyText = 'No entries
                 <td className="py-3 pr-4">{e.category_name}</td>
                 <td className="whitespace-nowrap py-3 pr-4">{methodLabel(e.method)}</td>
                 {!compact && (
-                  <td className={`py-3 pr-4 text-sm ${voided ? 'text-text-muted' : e.receipt_sha256 ? 'text-accent' : 'text-danger'}`}>
-                    {e.receipt_sha256 ? 'Attached' : 'Missing'}
+                  <td className={`py-3 pr-4 text-sm ${voided || (e.direction === 'income' && !e.receipt_sha256) ? 'text-text-muted' : e.receipt_sha256 ? 'text-accent' : 'text-danger'}`}>
+                    {e.receipt_sha256 ? 'Attached' : e.direction === 'income' ? '—' : 'Missing'}
                   </td>
                 )}
-                <td className="whitespace-nowrap py-3 text-right font-semibold">{formatRM(e.amount_sen)}</td>
+                <td className={`whitespace-nowrap py-3 text-right font-semibold ${e.direction === 'income' && !voided ? 'text-accent' : ''}`}>
+                  {e.direction === 'income' ? formatIncome(e.amount_sen) : formatRM(e.amount_sen)}
+                </td>
               </tr>
             )
           })}

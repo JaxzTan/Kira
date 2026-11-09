@@ -61,6 +61,9 @@ var shaRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // IsSHA256Hex reports whether s is 64 lowercase hex characters.
 func IsSHA256Hex(s string) bool { return shaRe.MatchString(s) }
 
+// ValidDirection reports whether d is an entry direction (expense | income).
+func ValidDirection(d string) bool { return d == DirectionExpense || d == DirectionIncome }
+
 // ValidMethod reports whether m is a method enum value.
 func ValidMethod(m string) bool { return MethodLabel(m) != "" }
 
@@ -102,7 +105,8 @@ func checkText(s string, max int) string {
 //
 // Normalisation: direction "" = expense; payee and note are trimmed; a
 // whitespace-only note becomes nil. receipt_sha256 must be nil or 64
-// lowercase hex ("" is an error). direction "income" is rejected until FR-9.
+// lowercase hex ("" is an error). direction is expense or income (FR-9);
+// whether the category matches it is checked by Service.
 //
 // Returns *ValidationError for field errors; if fields are fine but the date
 // is more than DateConfirmDays from today and !in.ConfirmDate, returns
@@ -126,12 +130,8 @@ func validateInput(in Input, today time.Time) (Input, *ValidationError, bool) {
 	if out.Direction == "" {
 		out.Direction = DirectionExpense
 	}
-	switch out.Direction {
-	case DirectionExpense:
-	case DirectionIncome:
-		ve.add("direction", "income is not supported yet; must be expense")
-	default:
-		ve.add("direction", "must be expense")
+	if !ValidDirection(out.Direction) {
+		ve.add("direction", "must be expense or income")
 	}
 	if err := ValidateAmount(out.AmountSen); err != nil {
 		ve.add("amount_sen", err.Error())
@@ -212,6 +212,13 @@ func ValidateFilter(f Filter) (Filter, error) {
 	}
 	if f.CategoryID < 0 {
 		return bad("bad category")
+	}
+	switch f.Direction {
+	case "":
+		f.Direction = "all"
+	case "all", DirectionExpense, DirectionIncome:
+	default:
+		return bad("direction must be all, expense or income")
 	}
 	switch f.Status {
 	case "":

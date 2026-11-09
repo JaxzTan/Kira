@@ -139,7 +139,9 @@ type VoidInput struct {
 // EntryList is the response of GET /api/entries.
 type EntryList struct {
 	Entries     []Entry `json:"entries"`
-	TotalSen    int64   `json:"total_sen"`
+	TotalSen    int64   `json:"total_sen"`  // expenses only (non-voided)
+	IncomeSen   int64   `json:"income_sen"` // income only (non-voided) — FR-9
+	NetSen      int64   `json:"net_sen"`    // income_sen - total_sen
 	Count       int     `json:"count"`
 	VoidedCount int     `json:"voided_count"`
 }
@@ -172,6 +174,7 @@ type Category struct {
 	Color      *string `json:"color"`
 	Icon       *string `json:"icon"`
 	ArchivedAt *string `json:"archived_at"`
+	Direction  string  `json:"direction"` // expense | income — FR-9
 }
 
 // CategoryList is the response of GET /api/categories.
@@ -181,8 +184,9 @@ type CategoryList struct {
 
 // CategoryCreate is the body of POST /api/categories.
 type CategoryCreate struct {
-	Name  string  `json:"name"`
-	Color *string `json:"color"`
+	Name      string  `json:"name"`
+	Color     *string `json:"color"`
+	Direction string  `json:"direction,omitempty"` // default "expense"
 }
 
 // CategoryPatch is the body of PATCH /api/categories/:id.
@@ -202,22 +206,26 @@ type CategoryTotal struct {
 
 // MonthTotal is one bar in the 6-month trend.
 type MonthTotal struct {
-	Month    string `json:"month"`
-	TotalSen int64  `json:"total_sen"`
+	Month     string `json:"month"`
+	TotalSen  int64  `json:"total_sen"`  // expenses
+	IncomeSen int64  `json:"income_sen"` // income — FR-9
 }
 
 // Summary is the response of GET /api/summary.
 type Summary struct {
-	Month             string          `json:"month"`
-	TotalSen          int64           `json:"total_sen"`
-	Count             int             `json:"count"`
-	VoidedCount       int             `json:"voided_count"`
-	PrevMonthTotalSen int64           `json:"prev_month_total_sen"`
-	ChangePct         *float64        `json:"change_pct"`
-	MissingReceipts   int             `json:"missing_receipts"`
-	ByCategory        []CategoryTotal `json:"by_category"`
-	Trend             []MonthTotal    `json:"trend"`
-	Recent            []Entry         `json:"recent"`
+	Month              string          `json:"month"`
+	TotalSen           int64           `json:"total_sen"`
+	Count              int             `json:"count"`
+	VoidedCount        int             `json:"voided_count"`
+	IncomeSen          int64           `json:"income_sen"` // FR-9
+	NetSen             int64           `json:"net_sen"`    // income_sen - total_sen
+	PrevMonthTotalSen  int64           `json:"prev_month_total_sen"`
+	PrevMonthIncomeSen int64           `json:"prev_month_income_sen"`
+	ChangePct          *float64        `json:"change_pct"`
+	MissingReceipts    int             `json:"missing_receipts"`
+	ByCategory         []CategoryTotal `json:"by_category"`
+	Trend              []MonthTotal    `json:"trend"`
+	Recent             []Entry         `json:"recent"`
 }
 
 // VerifyResult is the response of GET /api/ledger/verify and POST /api/ledger/acknowledge.
@@ -234,4 +242,4 @@ type VerifyResult struct {
 }
 
 // CSVHeader is the exact export header (TR-10).
-var CSVHeader = []string{"date", "category", "payee", "method", "amount_myr", "note", "status", "entry_id", "receipt_file"}
+var CSVHeader = []string{"date", "category", "payee", "method", "amount_myr", "note", "status", "entry_id", "receipt_file", "type"}

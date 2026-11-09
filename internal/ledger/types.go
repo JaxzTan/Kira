@@ -189,13 +189,16 @@ type Filter struct {
 	Method     string // "" = any
 	Q          string // case-insensitive substring of payee or note
 	Status     string // "" or "all" | "active" (incl. amended) | "voided"
+	Direction  string // "" or "all" | "expense" | "income" (FR-9)
 }
 
 // ListResult is api.EntryList. Totals exclude voided entries.
 type ListResult struct {
 	Entries     []Entry
-	TotalSen    int64
-	Count       int
+	TotalSen    int64 // expenses only
+	IncomeSen   int64 // income only (FR-9)
+	NetSen      int64 // IncomeSen - TotalSen (may be negative)
+	Count       int   // non-voided entries, both directions
 	VoidedCount int
 }
 
@@ -210,20 +213,24 @@ type CategoryTotal struct {
 
 // MonthTotal is one trend bar.
 type MonthTotal struct {
-	Month    string // YYYY-MM
-	TotalSen int64
+	Month     string // YYYY-MM
+	TotalSen  int64  // expenses
+	IncomeSen int64  // income (FR-9)
 }
 
 // Summary is api.Summary. All totals exclude voided entries.
 type Summary struct {
-	Month             string
-	TotalSen          int64
-	Count             int
-	VoidedCount       int
-	PrevMonthTotalSen int64
-	ChangePct         *float64 // nil when prev month total is 0
-	MissingReceipts   int
-	ByCategory        []CategoryTotal // total desc, non-zero only
-	Trend             []MonthTotal    // 6 months, oldest first, ending with Month
-	Recent            []Entry         // 5 most recent overall, voided included
+	Month              string
+	TotalSen           int64 // expenses only
+	Count              int   // non-voided entries in the month, both directions
+	VoidedCount        int   // voided entries in the month, both directions
+	IncomeSen          int64 // income only (FR-9)
+	NetSen             int64 // IncomeSen - TotalSen (may be negative)
+	PrevMonthTotalSen  int64 // expenses
+	PrevMonthIncomeSen int64
+	ChangePct          *float64        // expenses only; nil when prev month expense total is 0
+	MissingReceipts    int             // non-voided EXPENSE entries without a receipt
+	ByCategory         []CategoryTotal // expenses only; total desc, non-zero only
+	Trend              []MonthTotal    // 6 months, oldest first, ending with Month
+	Recent             []Entry         // 5 most recent overall, both directions, voided included
 }

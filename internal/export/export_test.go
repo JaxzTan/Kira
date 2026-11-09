@@ -57,11 +57,11 @@ func sp(s string) *string { return &s }
 
 func sampleRows(shaPDF, shaMissing string) []ledger.Entry {
 	return []ledger.Entry{
-		{ID: 1, OccurredOn: "2026-11-01", AmountSen: 4590, CategoryName: "Cloud & hosting", Payee: "Cloudflare", Method: ledger.MethodCard,
+		{ID: 1, Direction: ledger.DirectionExpense, OccurredOn: "2026-11-01", AmountSen: 4590, CategoryName: "Cloud & hosting", Payee: "Cloudflare", Method: ledger.MethodCard,
 			Note: sp("R2, \"domain\"\nline2"), Status: ledger.StatusActive, ReceiptSHA256: &shaPDF},
-		{ID: 2, OccurredOn: "2026-11-02", AmountSen: 123456, CategoryName: "Meals & entertainment", Payee: "=cmd|' /C calc'!A0", Method: ledger.MethodTNGEWallet,
+		{ID: 2, Direction: ledger.DirectionIncome, OccurredOn: "2026-11-02", AmountSen: 123456, CategoryName: "Client revenue", Payee: "=cmd|' /C calc'!A0", Method: ledger.MethodTNGEWallet,
 			Status: ledger.StatusAmended},
-		{ID: 3, OccurredOn: "2026-11-03", AmountSen: 1, CategoryName: "Other", Payee: "Kedai 茶", Method: ledger.MethodBankTransfer,
+		{ID: 3, Direction: ledger.DirectionIncome, OccurredOn: "2026-11-03", AmountSen: 1, CategoryName: "Other", Payee: "Kedai 茶", Method: ledger.MethodBankTransfer,
 			Status: ledger.StatusVoided, VoidReason: sp("dup"), ReceiptSHA256: &shaMissing},
 		{ID: 4, OccurredOn: "2026-11-04", AmountSen: 100, CategoryName: "Cloud & hosting", Payee: "Again", Method: ledger.MethodGrabPay,
 			Status: ledger.StatusActive, ReceiptSHA256: &shaPDF},
@@ -75,7 +75,7 @@ func TestWriteCSV(t *testing.T) {
 	if err := WriteCSV(&buf, sampleRows(shaPDF, shaMissing), rs); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(buf.String(), "date,category,payee,method,amount_myr,note,status,entry_id,receipt_file\r\n") {
+	if !strings.HasPrefix(buf.String(), "date,category,payee,method,amount_myr,note,status,entry_id,receipt_file,type\r\n") {
 		t.Fatalf("header: %q", buf.String()[:80])
 	}
 	recs, err := csv.NewReader(&buf).ReadAll()
@@ -84,10 +84,12 @@ func TestWriteCSV(t *testing.T) {
 	}
 	want := [][]string{
 		Header,
-		{"2026-11-01", "Cloud & hosting", "Cloudflare", "Card", "45.90", "R2, \"domain\"\nline2", "active", "1", shaPDF + ".pdf"},
-		{"2026-11-02", "Meals & entertainment", "'=cmd|' /C calc'!A0", "TNG eWallet", "1234.56", "", "amended", "2", ""},
-		{"2026-11-03", "Other", "Kedai 茶", "Bank transfer", "0.01", "", "voided", "3", shaMissing},
-		{"2026-11-04", "Cloud & hosting", "Again", "GrabPay", "1.00", "", "active", "4", shaPDF + ".pdf"},
+		{"2026-11-01", "Cloud & hosting", "Cloudflare", "Card", "45.90", "R2, \"domain\"\nline2", "active", "1", shaPDF + ".pdf", "expense"},
+		// income: amount stays positive, type column says income
+		{"2026-11-02", "Client revenue", "'=cmd|' /C calc'!A0", "TNG eWallet", "1234.56", "", "amended", "2", "", "income"},
+		{"2026-11-03", "Other", "Kedai 茶", "Bank transfer", "0.01", "", "voided", "3", shaMissing, "income"},
+		// Direction "" (zero value) exports as expense
+		{"2026-11-04", "Cloud & hosting", "Again", "GrabPay", "1.00", "", "active", "4", shaPDF + ".pdf", "expense"},
 	}
 	if len(recs) != len(want) {
 		t.Fatalf("got %d records", len(recs))

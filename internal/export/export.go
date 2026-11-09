@@ -4,7 +4,8 @@
 // CSV: header exactly Header; RFC 4180 via encoding/csv with CRLF line
 // endings; amount_myr formatted from integer sen with integer math only
 // ("1234.56", no separators, no currency); method as its display label;
-// status active|amended|voided; receipt_file "<sha256>.<ext>" or empty.
+// status active|amended|voided; receipt_file "<sha256>.<ext>" or empty;
+// type expense|income (FR-9; amount_myr stays positive for both).
 // Any cell starting with '=', '+', '-', '@', TAB or CR is prefixed with '
 // (CSV/formula injection guard).
 //
@@ -37,7 +38,7 @@ import (
 )
 
 // Header is the exact CSV header (TR-10).
-var Header = []string{"date", "category", "payee", "method", "amount_myr", "note", "status", "entry_id", "receipt_file"}
+var Header = []string{"date", "category", "payee", "method", "amount_myr", "note", "status", "entry_id", "receipt_file", "type"}
 
 // Receipts resolves a receipt sha to its file (*receipts.Store satisfies it).
 type Receipts interface {
@@ -89,9 +90,13 @@ func Record(e ledger.Entry, rs Receipts) []string {
 	if e.Note != nil {
 		note = *e.Note
 	}
+	typ := e.Direction
+	if typ == "" {
+		typ = ledger.DirectionExpense
+	}
 	cells := []string{
 		e.OccurredOn, e.CategoryName, e.Payee, label, FormatSen(e.AmountSen), note, e.Status,
-		strconv.FormatInt(e.ID, 10), receiptFile(e, rs),
+		strconv.FormatInt(e.ID, 10), receiptFile(e, rs), typ,
 	}
 	for i := range cells {
 		cells[i] = guard(cells[i])

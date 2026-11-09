@@ -18,6 +18,12 @@ import (
 	"github.com/JaxzTan/kira/internal/receipts"
 )
 
+// validDirectionParam reports whether a ?direction= query value is allowed
+// (FR-9): empty or "all" mean both directions.
+func validDirectionParam(d string) bool {
+	return d == "" || d == "all" || d == ledger.DirectionExpense || d == ledger.DirectionIncome
+}
+
 // ---- me ----
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +47,11 @@ func pathID(r *http.Request, name string) (int64, error) {
 
 func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	f := ledger.Filter{From: q.Get("from"), To: q.Get("to"), Method: q.Get("method"), Q: q.Get("q"), Status: q.Get("status")}
+	f := ledger.Filter{From: q.Get("from"), To: q.Get("to"), Method: q.Get("method"), Q: q.Get("q"), Status: q.Get("status"), Direction: q.Get("direction")}
+	if !validDirectionParam(f.Direction) {
+		s.fail(w, r, errBadRequest("direction must be all, expense or income"))
+		return
+	}
 	if f.From != "" && f.To != "" && f.From > f.To {
 		s.fail(w, r, errBadRequest("from must not be after to"))
 		return
@@ -59,7 +69,10 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, EntryList{Entries: toEntries(res.Entries), TotalSen: res.TotalSen, Count: res.Count, VoidedCount: res.VoidedCount})
+	writeJSON(w, http.StatusOK, EntryList{
+		Entries: toEntries(res.Entries), TotalSen: res.TotalSen, IncomeSen: res.IncomeSen, NetSen: res.NetSen,
+		Count: res.Count, VoidedCount: res.VoidedCount,
+	})
 }
 
 func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
@@ -223,7 +236,12 @@ func (s *Server) handleListCategories(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, errBadRequest("include_archived must be 1 or 0"))
 		return
 	}
-	cats, err := s.store.ListCategories(r.Context(), inc)
+	dir := r.URL.Query().Get("direction")
+	if !validDirectionParam(dir) {
+		s.fail(w, r, errBadRequest("direction must be all, expense or income"))
+		return
+	}
+	cats, err := s.store.ListCategories(r.Context(), inc, dir)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -241,7 +259,9 @@ func (s *Server) handleCreateCategory(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	c, err := s.store.CreateCategory(r.Context(), in.Name, in.Color)
+	// "" defaults to expense in the store; anything else invalid is a
+	// *store.NameError{Field: "direction"} → 422 fields.direction.
+	c, err := s.store.CreateCategory(r.Context(), in.Name, in.Color, in.Direction)
 	if err != nil {
 		s.fail(w, r, err)
 		return

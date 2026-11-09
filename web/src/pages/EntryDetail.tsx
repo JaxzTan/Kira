@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api, isApiError, isNetworkError } from '../api'
-import type { Category, Entry, EntryHistory, EntryInput, Method } from '../api/types'
+import type { Category, Direction, Entry, EntryHistory, EntryInput, Method } from '../api/types'
 import { LIMITS, METHODS } from '../api/types'
 import { HistoryTimeline } from '../components/HistoryTimeline'
 import { IconFile } from '../components/icons'
 import { useLedger } from '../components/ledger-context'
 import { VerifiedBadge } from '../components/VerifiedBadge'
+import { TypeSwitch } from '../components/TypeSwitch'
 import { Button, Card, ErrorNote, Field, Spinner, inputClass } from '../components/ui'
 import { longDate, shortHash } from '../lib/dates'
-import { formatRM, parseRMToSen, senToInput } from '../lib/money'
+import { formatIncome, formatRM, parseRMToSen, senToInput } from '../lib/money'
 
 const methodLabel = (m: string) => METHODS.find((x) => x.value === m)?.label ?? m
 
@@ -28,7 +29,7 @@ function Meta({ label, children }: { label: string; children: React.ReactNode })
   )
 }
 
-function ReceiptPreview({ sha }: { sha: string | null }) {
+function ReceiptPreview({ sha, optional = false }: { sha: string | null; optional?: boolean }) {
   const [imgOk, setImgOk] = useState(true)
   const [tampered, setTampered] = useState(false)
   useEffect(() => { setImgOk(true); setTampered(false) }, [sha])
@@ -42,7 +43,7 @@ function ReceiptPreview({ sha }: { sha: string | null }) {
   }
   const box = 'mb-5 grid min-h-[180px] place-items-center rounded-control border border-dashed border-border-strong bg-bg p-4 text-center'
   if (!sha) {
-    return <div className={box}><p className="text-sm text-danger">No receipt attached</p></div>
+    return <div className={box}><p className={`text-sm ${optional ? 'text-text-muted' : 'text-danger'}`}>No receipt attached</p></div>
   }
   const url = api.receiptUrl(sha)
   if (tampered) {
@@ -72,11 +73,12 @@ function ReceiptPreview({ sha }: { sha: string | null }) {
 
 export const UPLOAD_WAIT_MESSAGE = 'Waiting for receipt upload…'
 export const MAYBE_SAVED_MESSAGE = 'The server may have saved this — check the history before saving again.'
-const KNOWN_FIELDS = ['occurred_on', 'amount_sen', 'category_id', 'payee', 'method', 'note', 'receipt_sha256']
+const KNOWN_FIELDS = ['direction', 'occurred_on', 'amount_sen', 'category_id', 'payee', 'method', 'note', 'receipt_sha256']
 
 function CorrectForm({ entry, categories, onDone, onCancel, onUncertain }: { entry: Entry; categories: Category[]; onDone: () => void; onCancel: () => void; onUncertain: () => void }) {
   const [date, setDate] = useState(entry.occurred_on)
   const [amount, setAmount] = useState(senToInput(entry.amount_sen))
+  const [direction, setDirection] = useState<Direction>(entry.direction)
   const [categoryId, setCategoryId] = useState(entry.category_id)
   const [payee, setPayee] = useState(entry.payee)
   const [method, setMethod] = useState<Method>(entry.method)
@@ -91,7 +93,10 @@ function CorrectForm({ entry, categories, onDone, onCancel, onUncertain }: { ent
   // A late upload result must not mutate a closed (unmounted) form.
   useEffect(() => () => { uploadSeq.current++ }, [])
 
-  const selectable = categories.filter((c) => !c.archived_at || c.id === entry.category_id)
+  const selectable = categories.filter((c) => c.direction === direction && (!c.archived_at || c.id === entry.category_id))
+  // The selected category must belong to the chosen type; otherwise fall back to the first of that type.
+  const effectiveCategory = selectable.some((c) => c.id === categoryId) ? categoryId : (selectable[0]?.id ?? categoryId)
+  const isIncome = direction === 'income'
 
   async function submit(e?: FormEvent, confirm = false) {
     e?.preventDefault()
@@ -100,7 +105,7 @@ function CorrectForm({ entry, categories, onDone, onCancel, onUncertain }: { ent
     const sen = parseRMToSen(amount)
     if (sen === null || sen <= 0) { setFields({ amount_sen: 'Enter an amount like 45.90' }); return }
     const input: EntryInput = {
-      occurred_on: date, amount_sen: sen, category_id: categoryId, payee: payee.trim(), method,
+      direction, occurred_on: date, amount_sen: sen, category_id: effectiveCategory, payee: payee.trim(), method,
       note: note.trim() ? note.trim() : null, receipt_sha256: receipt, ...(confirm ? { confirm_date: true } : {}),
     }
     setBusy(true); setFields({}); setError(null)
@@ -139,15 +144,16 @@ function CorrectForm({ entry, categories, onDone, onCancel, onUncertain }: { ent
         <Field label="Date" htmlFor="c-date" error={fields.occurred_on}>
           <input id="c-date" type="date" value={date} onChange={(e) => { setDate(e.target.value); setNeedsConfirm(false) }} className={inputClass} />
         </Field>
+        <TypeSwitch id="c-type" value={direction} onChange={setDirection} />
         <Field label="Amount (RM)" htmlFor="c-amount" error={fields.amount_sen}>
           <input id="c-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className={`${inputClass} text-right font-semibold`} />
         </Field>
         <Field label="Category" htmlFor="c-cat" error={fields.category_id}>
-          <select id="c-cat" value={categoryId} onChange={(e) => setCategoryId(Number(e.target.value))} className={inputClass}>
+          <select id="c-cat" value={effectiveCategory} onChange={(e) => setCategoryId(Number(e.target.value))} className={inputClass}>
             {selectable.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </Field>
-        <Field label="Payee" htmlFor="c-payee" error={fields.payee}>
+        <Field label={isIncome ? 'From' : 'Payee'} htmlFor="c-payee" error={fields.payee}>
           <input id="c-payee" value={payee} maxLength={LIMITS.maxPayeeLen} onChange={(e) => setPayee(e.target.value)} className={inputClass} />
         </Field>
         <Field label="Paid with" htmlFor="c-method" error={fields.method}>
@@ -278,20 +284,21 @@ function EntryDetailView({ id }: { id: number }) {
               <h1 className={`font-display text-2xl font-semibold leading-tight ${voided ? 'text-text-muted line-through' : ''}`}>{e.payee}</h1>
               <p className="text-[15px] text-text-muted">{e.category_name}</p>
             </div>
-            <p className={`font-display text-[34px] font-bold leading-none ${voided ? 'text-text-muted line-through' : ''}`}>{formatRM(e.amount_sen)}</p>
+            <p className={`font-display text-[34px] font-bold leading-none ${voided ? 'text-text-muted line-through' : e.direction === 'income' ? 'text-accent' : ''}`}>{e.direction === 'income' ? formatIncome(e.amount_sen) : formatRM(e.amount_sen)}</p>
           </div>
           {mode === 'edit' ? (
             <CorrectForm entry={e} categories={categories} onDone={done} onCancel={() => setMode('view')} onUncertain={() => void load()} />
           ) : (
             <>
               <dl className="mb-5 grid grid-cols-3 gap-4 max-[520px]:grid-cols-2">
+                <Meta label="Type">{e.direction === 'income' ? 'Income' : 'Expense'}</Meta>
                 <Meta label="Date">{longDate(e.occurred_on)}</Meta>
                 <Meta label="Paid with">{methodLabel(e.method)}</Meta>
                 <Meta label="Status"><span className={voided ? 'text-danger' : ''}>{statusText(e)}</span></Meta>
                 <div className="col-span-full"><Meta label="Note">{e.note || <span className="font-normal text-text-muted">—</span>}</Meta></div>
                 {voided && <div className="col-span-full"><Meta label="Void reason"><span className="text-danger">{e.void_reason}</span></Meta></div>}
               </dl>
-              <ReceiptPreview sha={e.receipt_sha256} />
+              <ReceiptPreview sha={e.receipt_sha256} optional={e.direction === 'income'} />
               {!voided && mode === 'view' && (
                 <div className="flex flex-wrap gap-3">
                   <Button variant="outline" onClick={() => setMode('edit')}>Correct entry</Button>

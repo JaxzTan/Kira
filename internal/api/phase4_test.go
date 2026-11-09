@@ -354,12 +354,12 @@ func TestCategoryPatchIsAtomic(t *testing.T) {
 	h := newHarness(t)
 	wantStatus(t, h.do("POST", "/api/categories", map[string]any{"name": "Courses"}), 201)
 	// rename to a duplicate + archive: neither applies
-	wantError(t, h.do("PATCH", "/api/categories/11", map[string]any{"name": "Office", "archived": true}), 409, CodeConflict)
+	wantError(t, h.do("PATCH", "/api/categories/15", map[string]any{"name": "Office", "archived": true}), 409, CodeConflict)
 	l := decode[CategoryList](t, h.do("GET", "/api/categories", nil))
-	if len(l.Categories) != 11 {
+	if len(l.Categories) != 15 {
 		t.Fatalf("category archived by a failed PATCH: %d", len(l.Categories))
 	}
-	rec := h.do("PATCH", "/api/categories/11", map[string]any{"name": "Training", "archived": true})
+	rec := h.do("PATCH", "/api/categories/15", map[string]any{"name": "Training", "archived": true})
 	wantStatus(t, rec, 200)
 	if c := decode[Category](t, rec); c.Name != "Training" || c.ArchivedAt == nil {
 		t.Fatalf("patch both = %+v", c)

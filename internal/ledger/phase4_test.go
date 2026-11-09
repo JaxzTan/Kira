@@ -132,14 +132,16 @@ func TestValidationReportsAllFields(t *testing.T) {
 		req  Request
 		want []string
 	}{
-		{"everything bad incl unknown category", Request{Kind: KindCreate, Input: Input{Direction: DirectionIncome, OccurredOn: "x", AmountSen: 0, CategoryID: 99, Payee: " ", Method: "paypal", ReceiptSHA256: sp("")}},
+		{"everything bad incl unknown category", Request{Kind: KindCreate, Input: Input{Direction: "refund", OccurredOn: "x", AmountSen: 0, CategoryID: 99, Payee: " ", Method: "paypal", ReceiptSHA256: sp("")}},
 			[]string{"amount_sen", "category_id", "direction", "method", "occurred_on", "payee", "receipt_sha256"}},
 		{"archived category + amount", Request{Kind: KindCreate, Input: Input{OccurredOn: "2026-11-01", AmountSen: -1, CategoryID: 3, Payee: "x", Method: MethodCard}},
 			[]string{"amount_sen", "category_id"}},
 		{"unknown receipt + unknown category", Request{Kind: KindCreate, Input: Input{OccurredOn: "2026-11-01", AmountSen: 1, CategoryID: 42, Payee: "x", Method: MethodCard, ReceiptSHA256: sp(strings.Repeat("c", 64))}},
 			[]string{"category_id", "receipt_sha256"}},
-		{"income on amend", Request{Kind: KindAmend, RefID: 1, Input: Input{Direction: DirectionIncome, OccurredOn: "2026-11-01", AmountSen: 1, CategoryID: 1, Payee: "x", Method: MethodCard}},
-			[]string{"direction"}},
+		{"income on amend with expense category", Request{Kind: KindAmend, RefID: 1, Input: Input{Direction: DirectionIncome, OccurredOn: "2026-11-01", AmountSen: 1, CategoryID: 1, Payee: "x", Method: MethodCard}},
+			[]string{"category_id"}},
+		{"income category mismatch + amount", Request{Kind: KindCreate, Input: Input{OccurredOn: "2026-11-01", AmountSen: 0, CategoryID: 11, Payee: "x", Method: MethodCard}},
+			[]string{"amount_sen", "category_id"}},
 		{"empty receipt string", Request{Kind: KindCreate, Input: Input{OccurredOn: "2026-11-01", AmountSen: 1, CategoryID: 1, Payee: "x", Method: MethodCard, ReceiptSHA256: sp("")}},
 			[]string{"receipt_sha256"}},
 		{"field errors beat date confirm", Request{Kind: KindCreate, Input: Input{OccurredOn: "2020-01-01", AmountSen: 1, CategoryID: 99, Payee: "x", Method: MethodCard}},

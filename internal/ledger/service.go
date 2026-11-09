@@ -174,12 +174,21 @@ func (s *Service) Append(ctx context.Context, req Request) (AppendResult, error)
 		// 422 lists every bad field.
 		if in.CategoryID > 0 {
 			var archived sql.NullString
-			err := tx.QueryRowContext(ctx, `SELECT archived_at FROM categories WHERE id = ?`, in.CategoryID).Scan(&archived)
+			var catDir string
+			err := tx.QueryRowContext(ctx, `SELECT archived_at, direction FROM categories WHERE id = ?`, in.CategoryID).Scan(&archived, &catDir)
 			switch {
 			case errors.Is(err, sql.ErrNoRows):
 				ve.add("category_id", "unknown category")
 			case err != nil:
 				return AppendResult{}, fmt.Errorf("ledger: load category: %w", err)
+			case ValidDirection(in.Direction) && catDir != in.Direction:
+				// FR-9: an entry's category must match its direction (also
+				// on amend, so a direction change needs a matching category).
+				if catDir == DirectionIncome {
+					ve.add("category_id", "category is for income")
+				} else {
+					ve.add("category_id", "category is for expenses")
+				}
 			case archived.Valid && (target == nil || target.CategoryID != in.CategoryID):
 				// An amend may keep an entry's (now archived) category; new choices must be active.
 				ve.add("category_id", "category is archived")

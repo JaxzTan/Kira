@@ -326,3 +326,44 @@ func TestServeRefusesNonLoopbackHTTP(t *testing.T) {
 		t.Fatalf("= %d %q", code, errOut)
 	}
 }
+
+// FR-9: kira seed writes both expense and income entries, each on a
+// category of the matching direction, and the ledger still verifies.
+func TestSeedIncludesIncome(t *testing.T) {
+	ledgerEnv(t)
+	if code, _, e := runCmd(t, "seed", "--n", "300"); code != 0 {
+		t.Fatalf("seed = %d %q", code, e)
+	}
+	cfg, err := config.Load(config.ModeLedger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := openLedger(t.Context(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.st.Close()
+	res, err := d.svc.List(t.Context(), ledger.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.TotalSen == 0 || res.IncomeSen == 0 || res.NetSen != res.IncomeSen-res.TotalSen {
+		t.Fatalf("seeded totals: expense=%d income=%d net=%d", res.TotalSen, res.IncomeSen, res.NetSen)
+	}
+	cats, err := d.st.ListCategories(t.Context(), true, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := map[int64]string{}
+	for _, c := range cats {
+		dir[c.ID] = c.Direction
+	}
+	for _, e := range res.Entries {
+		if dir[e.CategoryID] != e.Direction {
+			t.Fatalf("entry %d: %s on %s category", e.ID, e.Direction, dir[e.CategoryID])
+		}
+	}
+	if code, out, _ := runCmd(t, "verify"); code != 0 {
+		t.Fatalf("verify after seed = %d %q", code, out)
+	}
+}

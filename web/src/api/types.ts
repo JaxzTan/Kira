@@ -113,11 +113,15 @@ export interface EntryFilter {
   method?: Method
   q?: string
   status?: 'all' | 'active' | 'voided'
+  direction?: 'all' | Direction
 }
 
 export interface EntryList {
   entries: Entry[]
+  /** expenses only */
   total_sen: number
+  income_sen: number
+  net_sen: number
   count: number
   voided_count: number
 }
@@ -146,6 +150,7 @@ export interface Category {
   color: string | null
   icon: string | null
   archived_at: string | null
+  direction: Direction
 }
 
 export interface CategoryList {
@@ -155,6 +160,7 @@ export interface CategoryList {
 export interface CategoryCreate {
   name: string
   color?: string | null
+  direction?: Direction
 }
 
 export interface CategoryPatch {
@@ -172,7 +178,9 @@ export interface CategoryTotal {
 
 export interface MonthTotal {
   month: string
+  /** expenses */
   total_sen: number
+  income_sen: number
 }
 
 export interface Summary {
@@ -180,7 +188,10 @@ export interface Summary {
   total_sen: number
   count: number
   voided_count: number
+  income_sen: number
+  net_sen: number
   prev_month_total_sen: number
+  prev_month_income_sen: number
   change_pct: number | null
   missing_receipts: number
   by_category: CategoryTotal[]

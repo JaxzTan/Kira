@@ -48,7 +48,7 @@ func toInput(in EntryInput) ledger.Input {
 }
 
 func toCategory(c store.Category) Category {
-	return Category{ID: c.ID, Name: c.Name, Color: c.Color, Icon: c.Icon, ArchivedAt: c.ArchivedAt}
+	return Category{ID: c.ID, Name: c.Name, Color: c.Color, Icon: c.Icon, ArchivedAt: c.ArchivedAt, Direction: c.Direction}
 }
 
 func toReceipt(i receipts.Info) Receipt {
@@ -58,6 +58,7 @@ func toReceipt(i receipts.Info) Receipt {
 func toSummary(s ledger.Summary) Summary {
 	out := Summary{
 		Month: s.Month, TotalSen: s.TotalSen, Count: s.Count, VoidedCount: s.VoidedCount,
+		IncomeSen: s.IncomeSen, NetSen: s.NetSen, PrevMonthIncomeSen: s.PrevMonthIncomeSen,
 		PrevMonthTotalSen: s.PrevMonthTotalSen, ChangePct: s.ChangePct, MissingReceipts: s.MissingReceipts,
 		ByCategory: make([]CategoryTotal, 0, len(s.ByCategory)),
 		Trend:      make([]MonthTotal, 0, len(s.Trend)),
@@ -67,7 +68,7 @@ func toSummary(s ledger.Summary) Summary {
 		out.ByCategory = append(out.ByCategory, CategoryTotal{CategoryID: c.CategoryID, Name: c.Name, Color: c.Color, TotalSen: c.TotalSen, Pct: c.Pct})
 	}
 	for _, m := range s.Trend {
-		out.Trend = append(out.Trend, MonthTotal{Month: m.Month, TotalSen: m.TotalSen})
+		out.Trend = append(out.Trend, MonthTotal{Month: m.Month, TotalSen: m.TotalSen, IncomeSen: m.IncomeSen})
 	}
 	return out
 }

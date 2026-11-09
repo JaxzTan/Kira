@@ -37,7 +37,7 @@ export default function Export() {
           <ButtonLink variant="outline" {...link('zip')}>Download ZIP with receipts</ButtonLink>
         </div>
         <p className="mt-5 text-xs text-text-muted">
-          CSV columns: date, category, payee, method, amount_myr, note, status, entry_id, receipt_file.
+          CSV columns: date, category, payee, method, amount_myr, note, status, entry_id, receipt_file, type. The type column is expense or income; amount_myr is always positive.
         </p>
       </Card>
     </>

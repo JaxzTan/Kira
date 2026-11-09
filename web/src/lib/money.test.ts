@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatAmount, formatRM, formatRMWhole, parseRMToSen, senToInput } from './money'
+import { formatAmount, formatIncome, formatNet, formatRM, formatRMWhole, parseRMToSen, senToInput } from './money'
 
 describe('formatRM', () => {
   it.each([
@@ -52,5 +52,18 @@ describe('parseRMToSen', () => {
   )
   it('round-trips', () => {
     for (const sen of [1, 29, 115, 4590, 123456, 99999999]) expect(parseRMToSen(senToInput(sen))).toBe(sen)
+  })
+})
+
+describe('income and net formatting', () => {
+  it('formats income with a plus sign', () => {
+    expect(formatIncome(120000)).toBe('+ RM 1,200.00')
+    expect(formatIncome(5)).toBe('+ RM 0.05')
+  })
+  it('formats net with sign, including negatives', () => {
+    expect(formatNet(123456)).toBe('+RM 1,234.56')
+    expect(formatNet(-123456)).toBe('-RM 1,234.56')
+    expect(formatNet(-5)).toBe('-RM 0.05')
+    expect(formatNet(0)).toBe('RM 0.00')
   })
 })

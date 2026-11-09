@@ -15,10 +15,12 @@ async function setup() {
 }
 
 describe('QuickAddBar', () => {
-  it('tab order is Date, Amount, Category, Payee, Paid with, Note, Receipt, Save', async () => {
+  it('tab order is Date, Type, Amount, Category, Payee, Paid with, Note, Receipt, Save', async () => {
     const { user } = await setup()
     const date = screen.getByLabelText('Date')
     date.focus()
+    await user.tab()
+    expect(screen.getByRole('radio', { name: 'Expense' })).toHaveFocus()
     const order = [
       'Amount (RM)', 'Category', 'Payee', 'Paid with', 'Note',
     ]
@@ -158,5 +160,54 @@ describe('QuickAddBar receipt upload race and network errors', () => {
     expect(onSaved).not.toHaveBeenCalled()
     expect(screen.getByLabelText('Amount (RM)')).toHaveValue('12')
     expect(screen.getByLabelText('Payee')).toHaveValue('Grab')
+  })
+})
+
+describe('QuickAddBar income', () => {
+  it('arrow keys flip the type; category list and payee label follow the direction', async () => {
+    const { user, categories } = await setup()
+    const names = () => Array.from((screen.getByLabelText('Category') as HTMLSelectElement).options).map((o) => o.text)
+    expect(names()).toEqual(categories.filter((c) => c.direction === 'expense').map((c) => c.name))
+    expect(names()).not.toContain('Client revenue')
+    screen.getByRole('radio', { name: 'Expense' }).focus()
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('radio', { name: 'Income' })).toHaveFocus()
+    expect(screen.getByRole('radio', { name: 'Income' })).toHaveAttribute('aria-checked', 'true')
+    expect(names()).toEqual(['Client revenue', 'Product sales', 'Refunds & rebates', 'Other income'])
+    expect(screen.getByLabelText('From')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Payee')).not.toBeInTheDocument()
+    await user.keyboard('{ArrowLeft}')
+    expect(screen.getByLabelText('Payee')).toBeInTheDocument()
+  })
+
+  it('remembers the last category per direction and keeps type after saving an income entry', async () => {
+    const { api, user, onSaved } = await setup()
+    await user.selectOptions(screen.getByLabelText('Category'), 'Hardware')
+    await user.click(screen.getByRole('radio', { name: 'Income' }))
+    expect(screen.getByLabelText('Category')).toHaveDisplayValue('Client revenue')
+    await user.selectOptions(screen.getByLabelText('Category'), 'Product sales')
+    await user.click(screen.getByRole('radio', { name: 'Expense' }))
+    expect(screen.getByLabelText('Category')).toHaveDisplayValue('Hardware')
+    await user.click(screen.getByRole('radio', { name: 'Income' }))
+    expect(screen.getByLabelText('Category')).toHaveDisplayValue('Product sales')
+
+    await user.type(screen.getByLabelText('From'), 'Gumroad')
+    await user.type(screen.getByLabelText('Amount (RM)'), '1200{Enter}')
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
+    expect(onSaved.mock.calls[0][0]).toMatchObject({ direction: 'income', amount_sen: 120000, category_name: 'Product sales' })
+    expect(screen.getByRole('radio', { name: 'Income' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByLabelText('Category')).toHaveDisplayValue('Product sales')
+    expect(screen.getByLabelText('Amount (RM)')).toHaveFocus()
+    const list = await api.listEntries({ direction: 'income', q: 'Gumroad' })
+    expect(list.entries[0].direction).toBe('income')
+  })
+
+  it('the new-entry event (I shortcut) switches to income and focuses Amount', async () => {
+    await setup()
+    window.dispatchEvent(new CustomEvent('kira:new-entry', { detail: 'income' }))
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Income' })).toHaveAttribute('aria-checked', 'true'))
+    expect(screen.getByLabelText('Amount (RM)')).toHaveFocus()
+    window.dispatchEvent(new CustomEvent('kira:new-entry', { detail: 'expense' }))
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Expense' })).toHaveAttribute('aria-checked', 'true'))
   })
 })

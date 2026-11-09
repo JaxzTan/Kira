@@ -42,21 +42,27 @@ type sample struct {
 	minSen int64
 	maxSen int64
 	note   string
+	income bool
 }
 
 var samples = []sample{
-	{"Cloudflare", "Cloud & hosting", ledger.MethodCard, 2000, 9000, "R2 + domain"},
-	{"DigitalOcean", "Cloud & hosting", ledger.MethodCard, 2500, 12000, "Droplet"},
-	{"GitHub Copilot", "Software & subscriptions", ledger.MethodCard, 4400, 4600, "Monthly plan"},
-	{"JetBrains", "Software & subscriptions", ledger.MethodCard, 3000, 9000, ""},
-	{"Lazada", "Hardware", ledger.MethodCard, 5000, 80000, "USB-C hub"},
-	{"Unifi Fibre", "Internet & phone", ledger.MethodBankTransfer, 12900, 14900, "Home fibre"},
-	{"Grab", "Travel & transport", ledger.MethodGrabPay, 800, 4500, "Client meeting"},
-	{"Touch 'n Go RFID", "Travel & transport", ledger.MethodTNGEWallet, 500, 3000, "Tolls"},
-	{"Village Park", "Meals & entertainment", ledger.MethodCash, 1200, 6000, "Lunch with client"},
-	{"SSM", "Professional fees", ledger.MethodBankTransfer, 5000, 30000, "Annual return"},
-	{"Canva", "Marketing", ledger.MethodCard, 5000, 6000, ""},
-	{"Popular Bookstore", "Office", ledger.MethodCash, 500, 5000, "Stationery"},
+	{"Cloudflare", "Cloud & hosting", ledger.MethodCard, 2000, 9000, "R2 + domain", false},
+	{"DigitalOcean", "Cloud & hosting", ledger.MethodCard, 2500, 12000, "Droplet", false},
+	{"GitHub Copilot", "Software & subscriptions", ledger.MethodCard, 4400, 4600, "Monthly plan", false},
+	{"JetBrains", "Software & subscriptions", ledger.MethodCard, 3000, 9000, "", false},
+	{"Lazada", "Hardware", ledger.MethodCard, 5000, 80000, "USB-C hub", false},
+	{"Unifi Fibre", "Internet & phone", ledger.MethodBankTransfer, 12900, 14900, "Home fibre", false},
+	{"Grab", "Travel & transport", ledger.MethodGrabPay, 800, 4500, "Client meeting", false},
+	{"Touch 'n Go RFID", "Travel & transport", ledger.MethodTNGEWallet, 500, 3000, "Tolls", false},
+	{"Village Park", "Meals & entertainment", ledger.MethodCash, 1200, 6000, "Lunch with client", false},
+	{"SSM", "Professional fees", ledger.MethodBankTransfer, 5000, 30000, "Annual return", false},
+	{"Canva", "Marketing", ledger.MethodCard, 5000, 6000, "", false},
+	// Income (FR-9): uses the seeded income categories.
+	{"Acme Sdn Bhd", "Client revenue", ledger.MethodBankTransfer, 300000, 900000, "Invoice: web app retainer", true},
+	{"Kopi Digital", "Client revenue", ledger.MethodBankTransfer, 150000, 450000, "Invoice: landing page", true},
+	{"Gumroad", "Product sales", ledger.MethodBankTransfer, 5000, 60000, "Template sales payout", true},
+	{"Shopee", "Refunds & rebates", ledger.MethodCard, 1000, 15000, "Refund: returned cable", true},
+	{"Popular Bookstore", "Office", ledger.MethodCash, 500, 5000, "Stationery", false},
 }
 
 func seed(ctx context.Context, cfg config.Config, n int, force bool, stdout, stderr io.Writer) int {
@@ -82,13 +88,21 @@ func seed(ctx context.Context, cfg config.Config, n int, force bool, stdout, std
 		fmt.Fprintln(stderr, "kira seed: ledger does not verify; refusing to write")
 		return 1
 	}
-	cats, err := d.st.ListCategories(ctx, false)
+	cats, err := d.st.ListCategories(ctx, false, ledger.DirectionExpense)
 	if err != nil || len(cats) == 0 {
 		fmt.Fprintln(stderr, "kira seed: no categories")
 		return 2
 	}
+	incCats, err := d.st.ListCategories(ctx, false, ledger.DirectionIncome)
+	if err != nil {
+		fmt.Fprintln(stderr, "kira seed:", err)
+		return 2
+	}
 	catID := map[string]int64{}
 	for _, c := range cats {
+		catID[c.Name] = c.ID
+	}
+	for _, c := range incCats {
 		catID[c.Name] = c.ID
 	}
 	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 42))
@@ -96,11 +110,24 @@ func seed(ctx context.Context, cfg config.Config, n int, force bool, stdout, std
 	var last ledger.AppendResult
 	for i := 0; i < n; i++ {
 		s := samples[rng.IntN(len(samples))]
+		if s.income && len(incCats) == 0 {
+			s = samples[0] // no income categories (all archived): fall back to an expense
+		}
 		id, ok := catID[s.cat]
 		if !ok {
-			id = cats[rng.IntN(len(cats))].ID
+			// Name renamed or archived: any active category of the same direction.
+			pool := cats
+			if s.income {
+				pool = incCats
+			}
+			id = pool[rng.IntN(len(pool))].ID
+		}
+		dir := ledger.DirectionExpense
+		if s.income {
+			dir = ledger.DirectionIncome
 		}
 		in := ledger.Input{
+			Direction:  dir,
 			OccurredOn: today.AddDate(0, 0, -rng.IntN(180)).Format("2006-01-02"),
 			AmountSen:  s.minSen + rng.Int64N(s.maxSen-s.minSen+1),
 			CategoryID: id,

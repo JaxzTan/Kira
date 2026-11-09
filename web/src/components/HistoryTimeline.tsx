@@ -8,9 +8,10 @@ const methodLabel = (m: string | null) => METHODS.find((x) => x.value === m)?.la
 export function diffSummary(prev: LedgerRow | undefined, row: LedgerRow, catName: (id: number | null) => string): string {
   if (row.kind === 'void') return `Reason: ${row.void_reason ?? ''}`
   if (row.kind === 'create' || !prev) {
-    return `${formatRM(row.amount_sen ?? 0)} · ${catName(row.category_id)} · ${methodLabel(row.method)}`
+    return `${row.direction === 'income' ? 'Income · ' : ''}${formatRM(row.amount_sen ?? 0)} · ${catName(row.category_id)} · ${methodLabel(row.method)}`
   }
   const parts: string[] = []
+  if (prev.direction !== row.direction) parts.push(`Type ${prev.direction} → ${row.direction}`)
   if (prev.amount_sen !== row.amount_sen) parts.push(`Amount ${formatRM(prev.amount_sen ?? 0)} → ${formatRM(row.amount_sen ?? 0)}`)
   if (prev.occurred_on !== row.occurred_on) parts.push(`Date ${longDate(prev.occurred_on ?? '')} → ${longDate(row.occurred_on ?? '')}`)
   if (prev.category_id !== row.category_id) parts.push(`Category ${catName(prev.category_id)} → ${catName(row.category_id)}`)

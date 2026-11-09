@@ -4,37 +4,39 @@ import { LedgerBanner } from './LedgerStatus'
 import { LedgerProvider } from './ledger-context'
 import { SidebarNav } from './SidebarNav'
 
-import { AMOUNT_ID } from '../lib/ids'
+import type { Direction } from '../api/types'
+import { AMOUNT_ID, NEW_ENTRY_EVENT } from '../lib/ids'
 
 function isTypingTarget(t: EventTarget | null): boolean {
   if (!(t instanceof HTMLElement)) return false
   return t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)
 }
 
-/** `N` anywhere (outside inputs) -> /entries and focus Amount. */
+/** `N` = new expense, `I` = new income (anywhere outside inputs) -> /entries, set type, focus Amount. */
 export function useNewEntryShortcut() {
   const navigate = useNavigate()
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() !== 'n' || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return
+      const k = e.key.toLowerCase()
+      if ((k !== 'n' && k !== 'i') || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return
       if (isTypingTarget(e.target) || document.querySelector('[role="dialog"]')) return
       e.preventDefault()
-      goAddExpense(navigate)
+      goAddEntry(navigate, k === 'i' ? 'income' : 'expense')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [navigate])
 }
 
-export function goAddExpense(navigate: ReturnType<typeof useNavigate>) {
-  const el = document.getElementById(AMOUNT_ID)
-  if (el) {
-    el.focus()
-    ;(el as HTMLInputElement).select?.()
+export function goAddEntry(navigate: ReturnType<typeof useNavigate>, direction: Direction) {
+  if (document.getElementById(AMOUNT_ID)) {
+    window.dispatchEvent(new CustomEvent(NEW_ENTRY_EVENT, { detail: direction }))
   } else {
-    navigate('/entries', { state: { focusAmount: Date.now() } })
+    navigate('/entries', { state: { focusAmount: Date.now(), direction } })
   }
 }
+
+export const goAddExpense = (navigate: ReturnType<typeof useNavigate>) => goAddEntry(navigate, 'expense')
 
 export function AppShell() {
   useNewEntryShortcut()

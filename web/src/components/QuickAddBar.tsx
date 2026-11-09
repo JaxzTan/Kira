@@ -1,18 +1,19 @@
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
 import { isApiError, isNetworkError } from '../api/errors'
-import type { Category, Entry, EntryInput, KiraApi, Method, Receipt } from '../api/types'
+import type { Category, Direction, Entry, EntryInput, KiraApi, Method, Receipt } from '../api/types'
 import { LIMITS, METHODS } from '../api/types'
 import { todayISO } from '../lib/dates'
-import { formatRM, parseRMToSen } from '../lib/money'
-import { AMOUNT_ID } from '../lib/ids'
+import { formatIncome, formatRM, parseRMToSen } from '../lib/money'
+import { AMOUNT_ID, NEW_ENTRY_EVENT } from '../lib/ids'
 import { IconCheck, IconPaperclip } from './icons'
+import { TypeSwitch } from './TypeSwitch'
 import { Button, Field, inputClass } from './ui'
 
 type Errors = Partial<Record<'date' | 'amount' | 'category' | 'payee' | 'method' | 'note' | 'receipt' | 'form', string>>
 
 const FIELD_MAP: Record<string, keyof Errors> = {
   occurred_on: 'date', amount_sen: 'amount', category_id: 'category', payee: 'payee',
-  method: 'method', note: 'note', receipt_sha256: 'receipt',
+  method: 'method', note: 'note', receipt_sha256: 'receipt', direction: 'form',
 }
 
 interface Props {
@@ -27,14 +28,16 @@ export const UPLOAD_WAIT_MESSAGE = 'Waiting for receipt upload…'
 export const MAYBE_SAVED_MESSAGE = 'The server may have saved this — check the list before saving again.'
 
 /**
- * Quick add (FR-3). Tab order: Date, Amount, Category, Payee, Paid with, Note, Receipt, Save.
+ * Quick add (FR-3, FR-9). Tab order: Date, Type, Amount, Category, Payee, Paid with, Note, Receipt, Save.
  * Enter saves from any field. After save: amount/payee/note/receipt are cleared, date/category/method
  * kept, Amount refocused.
  */
 export function QuickAddBar({ api, categories, onSaved, onUncertain }: Props) {
   const [date, setDate] = useState(todayISO())
   const [amount, setAmount] = useState('')
-  const [categoryId, setCategoryId] = useState<number | null>(null)
+  const [direction, setDirection] = useState<Direction>('expense')
+  // Last-used category per direction; falls back to the first category of that direction.
+  const [catByDir, setCatByDir] = useState<Record<Direction, number | null>>({ expense: null, income: null })
   const [payee, setPayee] = useState('')
   const [method, setMethod] = useState<Method>('card')
   const [note, setNote] = useState('')
@@ -51,7 +54,23 @@ export function QuickAddBar({ api, categories, onSaved, onUncertain }: Props) {
   const uploadSeq = useRef(0)
   const uploadingRef = useRef(false)
 
-  const effectiveCategory = categoryId ?? categories[0]?.id ?? null
+  const dirCategories = categories.filter((c) => c.direction === direction)
+  const remembered = catByDir[direction]
+  const effectiveCategory = dirCategories.find((c) => c.id === remembered)?.id ?? dirCategories[0]?.id ?? null
+  const isIncome = direction === 'income'
+  const payeeLabel = isIncome ? 'From' : 'Payee'
+
+  // `N` / `I` shortcuts (AppShell or Entries page) set the type and focus Amount.
+  useEffect(() => {
+    const onNew = (e: Event) => {
+      const d = (e as CustomEvent<Direction>).detail
+      if (d === 'expense' || d === 'income') setDirection(d)
+      amountRef.current?.focus()
+      amountRef.current?.select()
+    }
+    window.addEventListener(NEW_ENTRY_EVENT, onNew)
+    return () => window.removeEventListener(NEW_ENTRY_EVENT, onNew)
+  }, [])
 
   // Editing the date invalidates a previous "confirm this far-off date".
   useEffect(() => {
@@ -72,7 +91,7 @@ export function QuickAddBar({ api, categories, onSaved, onUncertain }: Props) {
     const sen = parseRMToSen(amount)
     if (sen === null || sen <= 0) next.amount = 'Enter an amount like 45.90'
     else if (sen >= LIMITS.maxAmountSen) next.amount = 'Amount is too large'
-    if (!payee.trim()) next.payee = 'Payee is required'
+    if (!payee.trim()) next.payee = `${payeeLabel} is required`
     if (effectiveCategory === null) next.category = 'Choose a category'
     if (!date) next.date = 'Choose a date'
     if (Object.keys(next).length) {
@@ -83,7 +102,7 @@ export function QuickAddBar({ api, categories, onSaved, onUncertain }: Props) {
       return
     }
     const input: EntryInput = {
-      occurred_on: date, amount_sen: sen!, category_id: effectiveCategory!, payee: payee.trim(), method,
+      direction, occurred_on: date, amount_sen: sen!, category_id: effectiveCategory!, payee: payee.trim(), method,
       note: note.trim() ? note.trim() : null, receipt_sha256: receipt?.sha256 ?? null,
       ...(confirm ? { confirm_date: true } : {}),
     }
@@ -98,7 +117,7 @@ export function QuickAddBar({ api, categories, onSaved, onUncertain }: Props) {
       setReceipt(null)
       setNeedsConfirm(false)
       setConfirmDate(false)
-      setFlash(`Saved ${formatRM(res.entry.amount_sen)} · ${res.entry.payee}`)
+      setFlash(`Saved ${res.entry.direction === 'income' ? formatIncome(res.entry.amount_sen) : formatRM(res.entry.amount_sen)} · ${res.entry.payee}`)
       onSaved?.(res.entry)
       amountRef.current?.focus()
     } catch (e) {
@@ -171,6 +190,7 @@ export function QuickAddBar({ api, categories, onSaved, onUncertain }: Props) {
         <Field label="Date" htmlFor="quick-date" error={err('date')} className="w-[150px]">
           <input id="quick-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} {...inv('date', 'quick-date')} />
         </Field>
+        <TypeSwitch id="quick-type" value={direction} onChange={setDirection} />
         <Field label="Amount (RM)" htmlFor={AMOUNT_ID} error={err('amount')} className="flex-[1_1_140px]">
           <input
             id={AMOUNT_ID} ref={amountRef} inputMode="decimal" autoComplete="off" placeholder="0.00"
@@ -179,11 +199,11 @@ export function QuickAddBar({ api, categories, onSaved, onUncertain }: Props) {
           />
         </Field>
         <Field label="Category" htmlFor="quick-category" error={err('category')} className="flex-[1.2_1_180px]">
-          <select id="quick-category" value={effectiveCategory ?? ''} onChange={(e) => setCategoryId(Number(e.target.value))} className={inputClass} {...inv('category', 'quick-category')}>
-            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          <select id="quick-category" value={effectiveCategory ?? ''} onChange={(e) => setCatByDir((p) => ({ ...p, [direction]: Number(e.target.value) }))} className={inputClass} {...inv('category', 'quick-category')}>
+            {dirCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </Field>
-        <Field label="Payee" htmlFor="quick-payee" error={err('payee')} className="flex-[1.4_1_180px]">
+        <Field label={payeeLabel} htmlFor="quick-payee" error={err('payee')} className="flex-[1.4_1_180px]">
           <input id="quick-payee" autoComplete="off" maxLength={LIMITS.maxPayeeLen} value={payee} onChange={(e) => setPayee(e.target.value)} className={inputClass} {...inv('payee', 'quick-payee')} />
         </Field>
         <Field label="Paid with" htmlFor="quick-method" error={err('method')} className="w-[140px]">

@@ -4,7 +4,7 @@ import { currentMonth, monthRange, shiftMonth, todayISO } from '../lib/dates'
 import { ApiError } from './errors'
 import type {
   AppendResult, Category, CategoryCreate, CategoryPatch, Entry, EntryFilter, EntryInput, KiraApi,
-  LedgerRow, Method, Receipt, Status, Summary, VerifyResult,
+  Direction, LedgerRow, Method, Receipt, Status, Summary, VerifyResult,
 } from './types'
 import { LIMITS, METHODS } from './types'
 
@@ -14,6 +14,10 @@ const CAT_SEED: Array<[string, string]> = [
   ['Internet & phone', '#7A5BB0'], ['Travel & transport', '#9AA09B'], ['Meals & entertainment', '#0F766E'],
   ['Professional fees', '#2F6FB5'], ['Marketing', '#C2701E'], ['Office', '#7A5BB0'], ['Other', '#9AA09B'],
 ]
+const INCOME_CAT_SEED: Array<[string, string]> = [
+  ['Client revenue', '#0F766E'], ['Product sales', '#2F6FB5'], ['Refunds & rebates', '#C2701E'], ['Other income', '#9AA09B'],
+]
+const EXPENSE_COUNT = CAT_SEED.length
 
 /** Non-cryptographic stand-in hash, 64 hex chars. Real hashing is server-side (HMAC). */
 function fakeHash(s: string): string {
@@ -56,6 +60,17 @@ const SEEDS: Seed[] = [
   [0, 8, 4800, 1, 'GitHub Copilot', 'card', 'Monthly plan, Nov', 'pdf'],
   [0, 9, 2340, 4, 'Grab', 'tng_ewallet', 'Airport', null],
   [0, 9, 4590, 0, 'Cloudflare', 'card', 'R2 + domain renewal', 'img'],
+  // Income (category index >= EXPENSE_COUNT): client invoices, product sales, a refund.
+  [5, 10, 450000, EXPENSE_COUNT, 'Acme Sdn Bhd — invoice #1041', 'bank_transfer', 'Website build, milestone 1', null],
+  [4, 8, 380000, EXPENSE_COUNT, 'Acme Sdn Bhd — invoice #1042', 'bank_transfer', 'Website build, milestone 2', null],
+  [4, 21, 68000, EXPENSE_COUNT + 1, 'Gumroad payout', 'bank_transfer', null, null],
+  [3, 12, 520000, EXPENSE_COUNT, 'Bintang Retail — invoice #1043', 'bank_transfer', 'Retainer, Q3', null],
+  [2, 9, 15000, EXPENSE_COUNT + 2, 'Shopee — keyboard refund', 'bank_transfer', 'Returned, wrong layout', null],
+  [2, 25, 410000, EXPENSE_COUNT, 'Acme Sdn Bhd — invoice #1044', 'bank_transfer', null, null],
+  [1, 14, 62000, EXPENSE_COUNT + 1, 'Gumroad payout', 'bank_transfer', null, null],
+  [1, 28, 600000, EXPENSE_COUNT, 'Bintang Retail — invoice #1045', 'bank_transfer', 'Retainer, Q4', null],
+  [0, 3, 350000, EXPENSE_COUNT, 'Acme Sdn Bhd — invoice #1046', 'bank_transfer', 'Maintenance', null],
+  [0, 5, 7500, EXPENSE_COUNT + 3, 'Maybank — interest', 'bank_transfer', null, null],
 ]
 
 export interface MockControls {
@@ -75,6 +90,8 @@ export function createMockApi(opts: { seed?: boolean } = {}): KiraApi & { contro
 
   const nowIso = () => new Date().toISOString().replace(/\.\d+Z$/, 'Z')
 
+  const dirOf = (catId: number | null): Direction => categories.find((c) => c.id === catId)?.direction ?? 'expense'
+
   function append(partial: Omit<LedgerRow, 'id' | 'prev_hash' | 'hash' | 'created_at' | 'currency' | 'direction'> & { direction?: LedgerRow['direction'] }, createdAt?: string): LedgerRow {
     const prev = rows.length ? rows[rows.length - 1].hash : ZERO_HASH
     const id = rows.length + 1
@@ -92,7 +109,10 @@ export function createMockApi(opts: { seed?: boolean } = {}): KiraApi & { contro
     receipts = new Map()
     broken = null
     acknowledgedHead = null
-    categories = CAT_SEED.map(([name, color], i) => ({ id: i + 1, name, color, icon: null, archived_at: null }))
+    categories = [
+      ...CAT_SEED.map(([name, color], i): Category => ({ id: i + 1, name, color, icon: null, archived_at: null, direction: 'expense' })),
+      ...INCOME_CAT_SEED.map(([name, color], i): Category => ({ id: EXPENSE_COUNT + i + 1, name, color, icon: null, archived_at: null, direction: 'income' })),
+    ]
     lastBackup = new Date(Date.now() - 12_000).toISOString()
     if (!seedData) return
     const now = new Date()
@@ -115,18 +135,18 @@ export function createMockApi(opts: { seed?: boolean } = {}): KiraApi & { contro
       }
       const created = `${occurred}T0${2 + (i % 7)}:0${i % 6}:00Z`
       const row = append({
-        kind: 'create', ref_id: null, occurred_on: occurred, amount_sen: sen, category_id: cat + 1,
+        kind: 'create', ref_id: null, direction: dirOf(cat + 1), occurred_on: occurred, amount_sen: sen, category_id: cat + 1,
         payee, method, note, void_reason: null, receipt_sha256: sha,
       }, created)
       if (payee === 'GitHub Copilot') {
         append({
-          kind: 'amend', ref_id: row.id, occurred_on: occurred, amount_sen: 4480, category_id: cat + 1,
+          kind: 'amend', ref_id: row.id, direction: dirOf(cat + 1), occurred_on: occurred, amount_sen: 4480, category_id: cat + 1,
           payee, method, note, void_reason: null, receipt_sha256: sha,
         }, `${occurred}T13:14:00Z`)
       }
       if (payee === 'Starbucks') {
         append({
-          kind: 'void', ref_id: row.id, occurred_on: null, amount_sen: null, category_id: null,
+          kind: 'void', ref_id: row.id, direction: dirOf(cat + 1), occurred_on: null, amount_sen: null, category_id: null,
           payee: null, method: null, note: null, void_reason: 'Personal expense, not business', receipt_sha256: null,
         }, `${occurred}T18:30:00Z`)
       }
@@ -161,8 +181,12 @@ export function createMockApi(opts: { seed?: boolean } = {}): KiraApi & { contro
 
   function totals(list: Entry[]) {
     const live = list.filter((e) => e.status !== 'voided')
+    const total_sen = live.filter((e) => e.direction === 'expense').reduce((s, e) => s + e.amount_sen, 0)
+    const income_sen = live.filter((e) => e.direction === 'income').reduce((s, e) => s + e.amount_sen, 0)
     return {
-      total_sen: live.reduce((s, e) => s + e.amount_sen, 0),
+      total_sen,
+      income_sen,
+      net_sen: income_sen - total_sen,
       count: live.length,
       voided_count: list.length - live.length,
     }
@@ -174,13 +198,16 @@ export function createMockApi(opts: { seed?: boolean } = {}): KiraApi & { contro
     }
   }
 
-  function validate(input: EntryInput) {
+  function validate(input: EntryInput, defaultDirection: Direction = 'expense') {
     const fields: Record<string, string> = {}
     if (!Number.isInteger(input.amount_sen) || input.amount_sen <= 0) fields.amount_sen = 'must be greater than 0'
     else if (input.amount_sen >= LIMITS.maxAmountSen) fields.amount_sen = 'must be less than RM 10,000,000'
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.occurred_on) || Number.isNaN(Date.parse(input.occurred_on))) fields.occurred_on = 'must be a valid date'
+    const direction = input.direction ?? defaultDirection
+    if (direction !== 'expense' && direction !== 'income') fields.direction = 'must be expense or income'
     const cat = categories.find((c) => c.id === input.category_id)
     if (!cat || cat.archived_at) fields.category_id = 'choose an existing, active category'
+    else if (!fields.direction && cat.direction !== direction) fields.category_id = `category is for ${cat.direction === 'income' ? 'income' : 'expenses'}`
     if (!METHODS.some((m) => m.value === input.method)) fields.method = 'invalid payment method'
     const payee = (input.payee ?? '').trim()
     if (payee.length < 1 || payee.length > LIMITS.maxPayeeLen) fields.payee = `required, 1–${LIMITS.maxPayeeLen} characters`
@@ -224,6 +251,7 @@ export function createMockApi(opts: { seed?: boolean } = {}): KiraApi & { contro
         const q = f.q.toLowerCase()
         list = list.filter((e) => e.payee.toLowerCase().includes(q) || (e.note ?? '').toLowerCase().includes(q))
       }
+      if (f.direction && f.direction !== 'all') list = list.filter((e) => e.direction === f.direction)
       if (f.status === 'active') list = list.filter((e) => e.status !== 'voided')
       if (f.status === 'voided') list = list.filter((e) => e.status === 'voided')
       return { entries: list, ...totals(list) }
@@ -247,7 +275,7 @@ export function createMockApi(opts: { seed?: boolean } = {}): KiraApi & { contro
       guardWrite()
       const cur = find(id)
       if (cur.status === 'voided') throw new ApiError(409, { error: 'Entry is voided', code: 'conflict', fields: null })
-      const { payee, note } = validate(input)
+      const { payee, note } = validate(input, cur.direction)
       const row = append({
         kind: 'amend', ref_id: id, direction: input.direction ?? cur.direction, occurred_on: input.occurred_on,
         amount_sen: input.amount_sen, category_id: input.category_id, payee, method: input.method, note,
@@ -264,7 +292,7 @@ export function createMockApi(opts: { seed?: boolean } = {}): KiraApi & { contro
         throw new ApiError(422, { error: 'Validation failed', code: 'validation', fields: { reason: `required, 1–${LIMITS.maxVoidReasonLen} characters` } })
       }
       const row = append({
-        kind: 'void', ref_id: id, occurred_on: null, amount_sen: null, category_id: null, payee: null,
+        kind: 'void', ref_id: id, direction: cur.direction, occurred_on: null, amount_sen: null, category_id: null, payee: null,
         method: null, note: null, void_reason: reason, receipt_sha256: null,
       })
       return resultFor(row)
@@ -291,7 +319,11 @@ export function createMockApi(opts: { seed?: boolean } = {}): KiraApi & { contro
       if (categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
         throw new ApiError(409, { error: 'A category with that name already exists', code: 'conflict', fields: null })
       }
-      const cat: Category = { id: categories.length + 1, name, color: input.color ?? CAT_SEED[categories.length % 5][1], icon: null, archived_at: null }
+      const direction = input.direction ?? 'expense'
+      if (direction !== 'expense' && direction !== 'income') {
+        throw new ApiError(422, { error: 'Validation failed', code: 'validation', fields: { direction: 'must be expense or income' } })
+      }
+      const cat: Category = { id: categories.length + 1, name, color: input.color ?? CAT_SEED[categories.length % 5][1], icon: null, archived_at: null, direction }
       categories = [...categories, cat]
       return { ...cat }
     },
@@ -322,8 +354,9 @@ export function createMockApi(opts: { seed?: boolean } = {}): KiraApi & { contro
       }
       const list = inMonth(m)
       const t = totals(list)
-      const prev = totals(inMonth(shiftMonth(m, -1))).total_sen
-      const live = list.filter((e) => e.status !== 'voided')
+      const prevT = totals(inMonth(shiftMonth(m, -1)))
+      const prev = prevT.total_sen
+      const live = list.filter((e) => e.status !== 'voided' && e.direction === 'expense')
       const byCat = new Map<number, number>()
       live.forEach((e) => byCat.set(e.category_id, (byCat.get(e.category_id) ?? 0) + e.amount_sen))
       const by_category = [...byCat.entries()]
@@ -337,10 +370,11 @@ export function createMockApi(opts: { seed?: boolean } = {}): KiraApi & { contro
         .sort((a, b) => b.total_sen - a.total_sen)
       const trend = Array.from({ length: 6 }, (_, i) => {
         const mm = shiftMonth(m, i - 5)
-        return { month: mm, total_sen: totals(inMonth(mm)).total_sen }
+        const tt = totals(inMonth(mm))
+        return { month: mm, total_sen: tt.total_sen, income_sen: tt.income_sen }
       })
       return {
-        month: m, ...t, prev_month_total_sen: prev,
+        month: m, ...t, prev_month_total_sen: prev, prev_month_income_sen: prevT.income_sen,
         change_pct: prev === 0 ? null : Math.round(((t.total_sen - prev) * 1000) / prev) / 10,
         missing_receipts: live.filter((e) => e.receipt_sha256 === null).length,
         by_category, trend, recent: all.slice(0, 5),

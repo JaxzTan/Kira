@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, isApiError } from '../api'
-import type { Category } from '../api/types'
+import type { Category, Direction } from '../api/types'
 import { LIMITS } from '../api/types'
 import { useMe } from '../components/auth-context'
 import { IconShield, IconShieldX } from '../components/icons'
@@ -57,6 +57,7 @@ export default function Settings() {
   const { verify, refresh } = useLedger()
   const [cats, setCats] = useState<Category[]>([])
   const [newName, setNewName] = useState('')
+  const [newDir, setNewDir] = useState<Direction>('expense')
   const [error, setError] = useState<string | null>(null)
   const [verifying, setVerifying] = useState(false)
 
@@ -74,7 +75,7 @@ export default function Settings() {
     if (!newName.trim()) return
     setError(null)
     try {
-      await api.createCategory({ name: newName.trim() })
+      await api.createCategory({ name: newName.trim(), direction: newDir })
       setNewName('')
       load()
     } catch (err) {
@@ -99,16 +100,27 @@ export default function Settings() {
           <ErrorNote message={error} onRetry={load} />
           {!catsLoaded && <Spinner />}
           {catsLoaded && cats.length === 0 && !error && <p className="mb-4 text-sm text-text-muted">No categories yet. Add one below.</p>}
-          <ul className="m-0 mb-4 list-none p-0">
-            {cats.map((c) => <CategoryRow key={`${c.id}-${c.name}-${c.archived_at}`} cat={c} onChanged={load} onError={setError} />)}
-          </ul>
-          <form onSubmit={(e) => void add(e)} className="flex items-end gap-3">
+          {(['expense', 'income'] as const).map((d) => (
+            <section key={d} aria-labelledby={`cats-${d}`} className="mb-4">
+              <h3 id={`cats-${d}`} className="mb-1 text-xs font-semibold uppercase tracking-wide text-text-muted">{d === 'expense' ? 'Expense categories' : 'Income categories'}</h3>
+              <ul className="m-0 list-none p-0">
+                {cats.filter((c) => c.direction === d).map((c) => <CategoryRow key={`${c.id}-${c.name}-${c.archived_at}`} cat={c} onChanged={load} onError={setError} />)}
+              </ul>
+            </section>
+          ))}
+          <form onSubmit={(e) => void add(e)} className="flex flex-wrap items-end gap-3">
             <Field label="New category" htmlFor="new-cat" className="flex-1">
               <input id="new-cat" value={newName} maxLength={LIMITS.maxCategoryLen} onChange={(e) => setNewName(e.target.value)} className={inputClass} />
             </Field>
+            <Field label="Type" htmlFor="new-cat-dir" className="w-[140px]">
+              <select id="new-cat-dir" value={newDir} onChange={(e) => setNewDir(e.target.value as Direction)} className={inputClass}>
+                <option value="expense">Expense</option>
+                <option value="income">Income</option>
+              </select>
+            </Field>
             <Button type="submit">Add</Button>
           </form>
-          <p className="mt-3 text-xs text-text-muted">Renaming or archiving never changes past ledger rows.</p>
+          <p className="mt-3 text-xs text-text-muted">Renaming or archiving never changes past ledger rows. A category's type is fixed when it is created.</p>
         </Card>
         <div className="flex flex-col gap-5">
           <Card>

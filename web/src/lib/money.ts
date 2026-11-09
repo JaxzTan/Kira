@@ -45,3 +45,14 @@ export function senToInput(sen: number): string {
   const whole = Math.floor(sen / 100)
   return `${whole}.${String(sen - whole * 100).padStart(2, '0')}`
 }
+
+/** Income display: 120000 -> "+ RM 1,200.00". */
+export function formatIncome(sen: number): string {
+  return `+ ${formatRM(sen)}`
+}
+
+/** Signed net: 5000 -> "+RM 50.00", -5000 -> "-RM 50.00", 0 -> "RM 0.00". */
+export function formatNet(sen: number): string {
+  if (sen === 0) return formatRM(0)
+  return `${sen < 0 ? '-' : '+'}${formatRM(Math.abs(sen))}`
+}

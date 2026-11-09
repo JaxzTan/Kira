@@ -30,10 +30,20 @@ type Category struct {
 	Color      *string
 	Icon       *string
 	ArchivedAt *string
+	Direction  string // DirectionExpense | DirectionIncome; set at creation, immutable (FR-9)
 }
 
-// NameError is returned for an invalid category field; Field is "name" or
-// "color". It wraps ErrInvalid.
+// Category directions (same strings as ledger entries' direction).
+const (
+	DirectionExpense = "expense"
+	DirectionIncome  = "income"
+)
+
+// ValidDirection reports whether d is a category direction.
+func ValidDirection(d string) bool { return d == DirectionExpense || d == DirectionIncome }
+
+// NameError is returned for an invalid category field; Field is "name",
+// "color" or "direction". It wraps ErrInvalid.
 type NameError struct {
 	Field string
 	Msg   string
@@ -56,12 +66,12 @@ func NormalizeCategoryName(name string) (string, error) {
 	return n, nil
 }
 
-const catCols = `id, name, color, icon, archived_at`
+const catCols = `id, name, color, icon, archived_at, direction`
 
 func scanCategory(sc interface{ Scan(...any) error }) (Category, error) {
 	var c Category
 	var color, icon, arch sql.NullString
-	if err := sc.Scan(&c.ID, &c.Name, &color, &icon, &arch); err != nil {
+	if err := sc.Scan(&c.ID, &c.Name, &color, &icon, &arch, &c.Direction); err != nil {
 		return c, err
 	}
 	c.Color, c.Icon, c.ArchivedAt = nullStr(color), nullStr(icon), nullStr(arch)
@@ -76,13 +86,28 @@ func nullStr(n sql.NullString) *string {
 	return &s
 }
 
-// ListCategories returns categories ordered by id; archived ones only if includeArchived.
-func (s *Store) ListCategories(ctx context.Context, includeArchived bool) ([]Category, error) {
-	q := `SELECT ` + catCols + ` FROM categories`
-	if !includeArchived {
-		q += ` WHERE archived_at IS NULL`
+// ListCategories returns categories ordered by id; archived ones only if
+// includeArchived. direction "" or "all" = both directions, otherwise
+// DirectionExpense or DirectionIncome (anything else is a *NameError on
+// "direction", wrapping ErrInvalid).
+func (s *Store) ListCategories(ctx context.Context, includeArchived bool, direction string) ([]Category, error) {
+	var conds []string
+	var args []any
+	switch direction {
+	case "", "all":
+	case DirectionExpense, DirectionIncome:
+		conds, args = append(conds, `direction = ?`), append(args, direction)
+	default:
+		return nil, &NameError{"direction", "must be all, expense or income"}
 	}
-	rows, err := s.db.QueryContext(ctx, q+` ORDER BY id`)
+	if !includeArchived {
+		conds = append(conds, `archived_at IS NULL`)
+	}
+	q := `SELECT ` + catCols + ` FROM categories`
+	if len(conds) > 0 {
+		q += ` WHERE ` + strings.Join(conds, ` AND `)
+	}
+	rows, err := s.db.QueryContext(ctx, q+` ORDER BY id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: list categories: %w", err)
 	}
@@ -134,11 +159,19 @@ func (s *Store) nameTaken(ctx context.Context, q interface {
 }
 
 // CreateCategory adds a category. color nil picks the next palette color.
+// direction "" = DirectionExpense; it can never be changed afterwards (no
+// store method updates it and a trigger refuses it).
 // Errors: *NameError (ErrInvalid), ErrDuplicateName.
-func (s *Store) CreateCategory(ctx context.Context, name string, color *string) (Category, error) {
+func (s *Store) CreateCategory(ctx context.Context, name string, color *string, direction string) (Category, error) {
 	n, err := NormalizeCategoryName(name)
 	if err != nil {
 		return Category{}, err
+	}
+	if direction == "" {
+		direction = DirectionExpense
+	}
+	if !ValidDirection(direction) {
+		return Category{}, &NameError{"direction", "must be expense or income"}
 	}
 	if color != nil && !colorRe.MatchString(*color) {
 		return Category{}, &NameError{"color", "must be #RRGGBB"}
@@ -163,7 +196,7 @@ func (s *Store) CreateCategory(ctx context.Context, name string, color *string) 
 		c := Palette[count%int64(len(Palette))]
 		color = &c
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO categories (name, color) VALUES (?, ?)`, n, *color)
+	res, err := tx.ExecContext(ctx, `INSERT INTO categories (name, color, direction) VALUES (?, ?, ?)`, n, *color, direction)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return Category{}, ErrDuplicateName

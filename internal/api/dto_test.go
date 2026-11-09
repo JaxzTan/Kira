@@ -38,7 +38,7 @@ func TestMethodsAndHeader(t *testing.T) {
 	if len(Methods) != 6 || Methods[3].Label != "TNG eWallet" {
 		t.Fatalf("methods changed: %+v", Methods)
 	}
-	if strings.Join(CSVHeader, ",") != "date,category,payee,method,amount_myr,note,status,entry_id,receipt_file" {
+	if strings.Join(CSVHeader, ",") != "date,category,payee,method,amount_myr,note,status,entry_id,receipt_file,type" {
 		t.Fatalf("csv header changed: %v", CSVHeader)
 	}
 }

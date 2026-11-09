@@ -87,7 +87,7 @@ func TestMigrateIdempotentAndSeedOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateCategory(ctx, "Courses", nil); err != nil {
+	if _, err := s.CreateCategory(ctx, "Courses", nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
@@ -97,43 +97,47 @@ func TestMigrateIdempotentAndSeedOnce(t *testing.T) {
 	}
 	defer s.Close()
 	v, err := s.SchemaVersion(ctx)
-	if err != nil || v != 3 {
+	if err != nil || v != 4 {
 		t.Fatalf("schema version = %d, %v", v, err)
 	}
-	cats, err := s.ListCategories(ctx, true)
+	cats, err := s.ListCategories(ctx, true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cats) != 11 {
-		t.Fatalf("got %d categories after reopen, want 11 (10 seeds + 1)", len(cats))
+	if len(cats) != 15 {
+		t.Fatalf("got %d categories after reopen, want 15 (10 expense + 4 income seeds + 1)", len(cats))
 	}
 }
 
 func TestSeedCategories(t *testing.T) {
 	s := openTest(t)
-	cats, err := s.ListCategories(context.Background(), false)
+	cats, err := s.ListCategories(context.Background(), false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []struct{ name, color string }{
-		{"Cloud & hosting", "#0F766E"},
-		{"Software & subscriptions", "#2F6FB5"},
-		{"Hardware", "#C2701E"},
-		{"Internet & phone", "#7A5BB0"},
-		{"Travel & transport", "#9AA09B"},
-		{"Meals & entertainment", "#0F766E"},
-		{"Professional fees", "#2F6FB5"},
-		{"Marketing", "#C2701E"},
-		{"Office", "#7A5BB0"},
-		{"Other", "#9AA09B"},
+	want := []struct{ name, color, dir string }{
+		{"Cloud & hosting", "#0F766E", DirectionExpense},
+		{"Software & subscriptions", "#2F6FB5", DirectionExpense},
+		{"Hardware", "#C2701E", DirectionExpense},
+		{"Internet & phone", "#7A5BB0", DirectionExpense},
+		{"Travel & transport", "#9AA09B", DirectionExpense},
+		{"Meals & entertainment", "#0F766E", DirectionExpense},
+		{"Professional fees", "#2F6FB5", DirectionExpense},
+		{"Marketing", "#C2701E", DirectionExpense},
+		{"Office", "#7A5BB0", DirectionExpense},
+		{"Other", "#9AA09B", DirectionExpense},
+		{"Client revenue", "#0F766E", DirectionIncome},
+		{"Product sales", "#2F6FB5", DirectionIncome},
+		{"Refunds & rebates", "#C2701E", DirectionIncome},
+		{"Other income", "#9AA09B", DirectionIncome},
 	}
 	if len(cats) != len(want) {
 		t.Fatalf("got %d seeds", len(cats))
 	}
 	for i, w := range want {
 		c := cats[i]
-		if c.ID != int64(i+1) || c.Name != w.name || c.Color == nil || *c.Color != w.color || c.ArchivedAt != nil {
-			t.Errorf("seed %d = %+v, want %s %s", i, c, w.name, w.color)
+		if c.ID != int64(i+1) || c.Name != w.name || c.Color == nil || *c.Color != w.color || c.ArchivedAt != nil || c.Direction != w.dir {
+			t.Errorf("seed %d = %+v, want %s %s %s", i, c, w.name, w.color, w.dir)
 		}
 	}
 }
@@ -309,16 +313,16 @@ func TestCategories(t *testing.T) {
 	}
 	for _, tc := range createCases {
 		t.Run("create "+tc.name, func(t *testing.T) {
-			c, err := s.CreateCategory(ctx, tc.name, tc.color)
+			c, err := s.CreateCategory(ctx, tc.name, tc.color, "")
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tc.wantErr)
 			}
-			if err == nil && (c.Name != strings.TrimSpace(tc.name) || c.Color == nil) {
+			if err == nil && (c.Name != strings.TrimSpace(tc.name) || c.Color == nil || c.Direction != DirectionExpense) {
 				t.Fatalf("got %+v", c)
 			}
 		})
 	}
-	books, err := s.RenameCategory(ctx, 12, "Books & media")
+	books, err := s.RenameCategory(ctx, 16, "Books & media")
 	if err != nil || books.Name != "Books & media" {
 		t.Fatalf("rename: %+v %v", books, err)
 	}
@@ -327,10 +331,11 @@ func TestCategories(t *testing.T) {
 		name    string
 		wantErr error
 	}{
-		{12, "books & MEDIA", nil}, // same row, case change ok
-		{12, "Hardware", ErrDuplicateName},
+		{16, "books & MEDIA", nil}, // same row, case change ok
+		{16, "Hardware", ErrDuplicateName},
+		{16, "client REVENUE", ErrDuplicateName}, // names are unique across directions
 		{999, "Nope", ErrNotFound},
-		{12, "", ErrInvalid},
+		{16, "", ErrInvalid},
 	}
 	for _, tc := range renameCases {
 		if _, err := s.RenameCategory(ctx, tc.id, tc.name); !errors.Is(err, tc.wantErr) {
@@ -345,8 +350,8 @@ func TestCategories(t *testing.T) {
 	if c, _ := s.ArchiveCategory(ctx, 3, at.Add(time.Hour)); *c.ArchivedAt != "2026-11-09T00:00:00Z" {
 		t.Fatal("re-archive changed archived_at")
 	}
-	active, _ := s.ListCategories(ctx, false)
-	all, _ := s.ListCategories(ctx, true)
+	active, _ := s.ListCategories(ctx, false, "")
+	all, _ := s.ListCategories(ctx, true, "")
 	if len(all)-len(active) != 1 {
 		t.Fatalf("active %d all %d", len(active), len(all))
 	}

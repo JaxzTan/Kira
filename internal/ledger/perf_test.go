@@ -11,7 +11,9 @@ import (
 
 // seedFast inserts n hash-chained rows in ONE transaction (bypassing the
 // per-append fsync, which would take minutes): ~90% creates spread over
-// two years, ~8% amends, ~2% voids. The chain is valid (Verify passes).
+// two years, ~8% amends, ~2% voids. Every 7th create is income (income
+// category, FR-9); amends keep their entry's direction. The chain is valid
+// (Verify passes).
 func seedFast(t testing.TB, svc *Service, n int) {
 	t.Helper()
 	ctx := context.Background()
@@ -32,6 +34,7 @@ func seedFast(t testing.TB, svc *Service, n int) {
 	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	created := []int64{}
 	voided := map[int64]bool{}
+	income := map[int64]bool{}
 	prev := GenesisHash
 	for i := 1; i <= n; i++ {
 		id := int64(i)
@@ -47,6 +50,9 @@ func seedFast(t testing.TB, svc *Service, n int) {
 				voided[ref] = true
 				reason := "dup"
 				r.Kind, r.RefID, r.VoidReason = KindVoid, &ref, &reason
+				if income[ref] {
+					r.Direction = DirectionIncome // void rows carry the entry's direction
+				}
 				break
 			}
 			fallthrough
@@ -63,6 +69,13 @@ func seedFast(t testing.TB, svc *Service, n int) {
 		if r.Kind != KindVoid {
 			date := base.AddDate(0, 0, i%700).Format(time.DateOnly)
 			amt, cat := int64(100+i%50000), int64(1+i%10)
+			isIncome := (r.Kind == KindCreate && i%7 == 0) || (r.Kind == KindAmend && income[*r.RefID])
+			if isIncome {
+				r.Direction, cat = DirectionIncome, int64(11+i%4)
+				if r.Kind == KindCreate {
+					income[id] = true
+				}
+			}
 			payee, method := payees[i%len(payees)], methods[i%len(methods)]
 			r.OccurredOn, r.AmountSen, r.CategoryID, r.Payee, r.Method = &date, &amt, &cat, &payee, &method
 			if i%3 == 0 {
@@ -114,6 +127,10 @@ func TestNFR6Performance(t *testing.T) {
 		{"List q note", func() (int, error) { r, err := svc.List(ctx, Filter{Q: "invoice 1"}); return len(r.Entries), err }},
 		{"List month + category", func() (int, error) {
 			r, err := svc.List(ctx, Filter{From: "2025-03-01", To: "2025-03-31", CategoryID: 3})
+			return len(r.Entries), err
+		}},
+		{"List income", func() (int, error) {
+			r, err := svc.List(ctx, Filter{Direction: DirectionIncome})
 			return len(r.Entries), err
 		}},
 		{"Summary", func() (int, error) { s, err := svc.Summary(ctx, "2025-06"); return s.Count, err }},

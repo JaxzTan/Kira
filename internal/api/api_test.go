@@ -303,32 +303,34 @@ func TestReceipts(t *testing.T) {
 func TestCategories(t *testing.T) {
 	h := newHarness(t)
 	list := decode[CategoryList](t, h.do("GET", "/api/categories", nil))
-	if len(list.Categories) != 10 || list.Categories[0].Name != "Cloud & hosting" || list.Categories[9].Name != "Other" {
+	// 10 expense seeds + 4 income seeds (FR-9, migration 0004).
+	if len(list.Categories) != 14 || list.Categories[0].Name != "Cloud & hosting" || list.Categories[9].Name != "Other" ||
+		list.Categories[10].Name != "Client revenue" || list.Categories[10].Direction != "income" || list.Categories[0].Direction != "expense" {
 		t.Fatalf("seed = %+v", list)
 	}
 	rec := h.do("POST", "/api/categories", map[string]any{"name": " Courses ", "color": "#2F6FB5"})
 	wantStatus(t, rec, 201)
 	c := decode[Category](t, rec)
-	if c.Name != "Courses" || c.ID != 11 || c.ArchivedAt != nil {
+	if c.Name != "Courses" || c.ID != 15 || c.Direction != "expense" || c.ArchivedAt != nil {
 		t.Fatalf("created = %+v", c)
 	}
-	rec = h.do("PATCH", "/api/categories/11", map[string]any{"name": "Training"})
+	rec = h.do("PATCH", "/api/categories/15", map[string]any{"name": "Training"})
 	wantStatus(t, rec, 200)
 	if c = decode[Category](t, rec); c.Name != "Training" {
 		t.Fatalf("renamed = %+v", c)
 	}
-	rec = h.do("PATCH", "/api/categories/11", map[string]any{"archived": true})
+	rec = h.do("PATCH", "/api/categories/15", map[string]any{"archived": true})
 	wantStatus(t, rec, 200)
 	if c = decode[Category](t, rec); c.ArchivedAt == nil {
 		t.Fatal("not archived")
 	}
-	if l := decode[CategoryList](t, h.do("GET", "/api/categories", nil)); len(l.Categories) != 10 {
+	if l := decode[CategoryList](t, h.do("GET", "/api/categories", nil)); len(l.Categories) != 14 {
 		t.Fatalf("archived listed: %d", len(l.Categories))
 	}
-	if l := decode[CategoryList](t, h.do("GET", "/api/categories?include_archived=1", nil)); len(l.Categories) != 11 {
+	if l := decode[CategoryList](t, h.do("GET", "/api/categories?include_archived=1", nil)); len(l.Categories) != 15 {
 		t.Fatalf("include_archived: %d", len(l.Categories))
 	}
-	rec = h.do("PATCH", "/api/categories/11", map[string]any{"archived": false})
+	rec = h.do("PATCH", "/api/categories/15", map[string]any{"archived": false})
 	if c = decode[Category](t, rec); c.ArchivedAt != nil {
 		t.Fatal("not unarchived")
 	}
@@ -343,8 +345,8 @@ func TestCategories(t *testing.T) {
 		{"empty name", "POST", "/api/categories", map[string]any{"name": "  "}, 422, CodeValidation},
 		{"long name", "POST", "/api/categories", map[string]any{"name": strings.Repeat("n", 61)}, 422, CodeValidation},
 		{"bad color", "POST", "/api/categories", map[string]any{"name": "X", "color": "red"}, 422, CodeValidation},
-		{"rename to duplicate", "PATCH", "/api/categories/11", map[string]any{"name": "Office"}, 409, CodeConflict},
-		{"patch nothing", "PATCH", "/api/categories/11", map[string]any{}, 400, CodeBadRequest},
+		{"rename to duplicate", "PATCH", "/api/categories/15", map[string]any{"name": "Office"}, 409, CodeConflict},
+		{"patch nothing", "PATCH", "/api/categories/15", map[string]any{}, 400, CodeBadRequest},
 		{"patch missing", "PATCH", "/api/categories/999", map[string]any{"name": "Y"}, 404, CodeNotFound},
 		{"patch bad id", "PATCH", "/api/categories/x", map[string]any{"name": "Y"}, 400, CodeBadRequest},
 		{"bad include flag", "GET", "/api/categories?include_archived=maybe", nil, 400, CodeBadRequest},
@@ -389,7 +391,7 @@ func TestExport(t *testing.T) {
 		t.Fatalf("disposition %q", cd)
 	}
 	lines := strings.Split(rec.Body.String(), "\r\n")
-	if lines[0] != "date,category,payee,method,amount_myr,note,status,entry_id,receipt_file" {
+	if lines[0] != "date,category,payee,method,amount_myr,note,status,entry_id,receipt_file,type" {
 		t.Fatalf("csv header %q", lines[0])
 	}
 	if !strings.HasPrefix(lines[1], today()+",Cloud & hosting,Cloudflare,Card,45.90,R2 + domain,active,1,") {
