@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures'
 import { row, today, uniq } from './helpers'
 
 test('keyboard-only add: N, Tab through fields, Enter saves, form resets, under 10 s', async ({ page }) => {

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures'
 import { row, uniq } from './helpers'
 import { makePng } from './helpers'
 

@@ -25,8 +25,12 @@ import (
 
 // Cookie names and lifetimes (docs/api-contract.md, Auth section).
 const (
+	// SessionCookie is the session cookie name over plain http (dev).
 	SessionCookie = "kira_session"
-	OAuthCookie   = "kira_oauth"
+	// SecureSessionCookie is the name used when Config.Secure is set: the
+	// __Host- prefix makes the browser insist on Secure, Path=/ and no Domain.
+	SecureSessionCookie = "__Host-kira_session"
+	OAuthCookie         = "kira_oauth"
 
 	SessionTTL    = 30 * 24 * time.Hour
 	OAuthStateTTL = 10 * time.Minute
@@ -46,7 +50,10 @@ const (
 	ResultRejectUnverified = "reject_unverified"
 	ResultRejectSub        = "reject_sub"
 	ResultRejectToken      = "reject_token"
-	ResultRejectState      = "reject_state"
+	// ResultRejectState (bad/missing state or oauth cookie, missing code,
+	// failed code exchange) is logged via slog at WARN only, never to the
+	// append-only auth_log: those requests are unauthenticated and unbounded.
+	ResultRejectState = "reject_state"
 )
 
 // Store is the persistence auth needs. kira-ledger implements it in
@@ -70,7 +77,8 @@ type Config struct {
 	AllowedEmail  string
 	AllowedSub    string // optional; else the owner row (pinned on first login)
 	SessionSecret []byte // signs the kira_oauth cookie; >= 32 bytes
-	Secure        bool   // PUBLIC_URL is https
+	Secure        bool   // PUBLIC_URL is https; session cookie becomes __Host-kira_session
+	PublicOrigin  string // scheme://host[:port] of PUBLIC_URL; Origin fallback for CSRF checks (see SameOrigin)
 	Now           func() time.Time
 	Logger        *slog.Logger
 }
@@ -120,6 +128,7 @@ func New(cfg Config, store Store) (*Auth, error) {
 		cfg.Now = time.Now
 	}
 	cfg.AllowedSub = strings.TrimSpace(cfg.AllowedSub)
+	cfg.PublicOrigin = strings.TrimRight(strings.TrimSpace(cfg.PublicOrigin), "/")
 	log := cfg.Logger
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -134,6 +143,15 @@ func (a *Auth) Routes(r chi.Router) {
 	r.Get("/auth/google/callback", a.handleCallback)
 	r.Post("/auth/logout", a.handleLogout)
 	a.registerTestLogin(r)
+}
+
+// SessionCookieName is the only cookie name the session is read from:
+// SecureSessionCookie when Config.Secure, else SessionCookie.
+func (a *Auth) SessionCookieName() string {
+	if a.cfg.Secure {
+		return SecureSessionCookie
+	}
+	return SessionCookie
 }
 
 func (a *Auth) now() time.Time { return a.cfg.Now().UTC() }

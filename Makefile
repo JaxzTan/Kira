@@ -54,7 +54,7 @@ e2e: build-e2e ## Playwright E2E
 	@if [ ! -f e2e/package.json ]; then echo "e2e/package.json missing (kira-tester has not created it yet)"; exit 1; fi
 	npm --prefix e2e ci
 	cd e2e && npx playwright install chromium
-	cd e2e && npx playwright test
+	cd e2e && KIRA_E2E=1 npx playwright test
 
 backup-test: ## Litestream replicate/restore drill in a temp dir
 	@bash scripts/backup-test.sh

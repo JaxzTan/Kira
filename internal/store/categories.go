@@ -20,6 +20,10 @@ var Palette = []string{"#0F766E", "#2F6FB5", "#C2701E", "#7A5BB0", "#9AA09B"}
 var colorRe = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 
 // Category mirrors api.Category.
+//
+// Categories are NOT part of the ledger hash chain: entries reference
+// category_id only, so renaming a category relabels historic entries and
+// exports. Deferred to v1.1: snapshot category_name per entries row.
 type Category struct {
 	ID         int64
 	Name       string
@@ -173,7 +177,7 @@ func (s *Store) CreateCategory(ctx context.Context, name string, color *string) 
 	return s.GetCategory(ctx, id)
 }
 
-// RenameCategory changes a category's name. Errors: ErrNotFound, *NameError, ErrDuplicateName.
+// RenameCategory changes a category's name. Prefer UpdateCategory for PATCH. Errors: ErrNotFound, *NameError, ErrDuplicateName.
 func (s *Store) RenameCategory(ctx context.Context, id int64, name string) (Category, error) {
 	n, err := NormalizeCategoryName(name)
 	if err != nil {
@@ -205,6 +209,69 @@ func (s *Store) RenameCategory(ctx context.Context, id int64, name string) (Cate
 		return Category{}, fmt.Errorf("store: rename category: %w", err)
 	}
 	return s.GetCategory(ctx, id)
+}
+
+// UpdateCategory applies an optional rename and an optional archive flag
+// change in ONE transaction, so a PATCH either fully applies or not at all.
+// name nil = keep; archived nil = keep; *archived true archives (keeping an
+// existing archived_at), false unarchives. With both nil it just returns the
+// category. Errors: ErrNotFound, *NameError (ErrInvalid), ErrDuplicateName.
+//
+// Note: categories live outside the hash chain. Entries store category_id
+// only, so a rename changes the label shown for historic entries (lists,
+// export CSV). A v1.1 migration should snapshot category_name per row.
+func (s *Store) UpdateCategory(ctx context.Context, id int64, name *string, archived *bool, at time.Time) (Category, error) {
+	var n string
+	if name != nil {
+		var err error
+		if n, err = NormalizeCategoryName(*name); err != nil {
+			return Category{}, err
+		}
+	}
+	tx, err := s.db.BeginTx(ctx, nil) // BEGIN IMMEDIATE
+	if err != nil {
+		return Category{}, fmt.Errorf("store: update category: %w", err)
+	}
+	defer tx.Rollback()
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM categories WHERE id = ?`, id).Scan(&exists); err != nil {
+		return Category{}, fmt.Errorf("store: update category: %w", err)
+	}
+	if exists == 0 {
+		return Category{}, ErrNotFound
+	}
+	if name != nil {
+		taken, err := s.nameTaken(ctx, tx, n, id)
+		if err != nil {
+			return Category{}, fmt.Errorf("store: update category: %w", err)
+		}
+		if taken {
+			return Category{}, ErrDuplicateName
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE categories SET name = ? WHERE id = ?`, n, id); err != nil {
+			if strings.Contains(err.Error(), "UNIQUE") {
+				return Category{}, ErrDuplicateName
+			}
+			return Category{}, fmt.Errorf("store: update category: %w", err)
+		}
+	}
+	if archived != nil {
+		q, args := `UPDATE categories SET archived_at = NULL WHERE id = ?`, []any{id}
+		if *archived {
+			q, args = `UPDATE categories SET archived_at = COALESCE(archived_at, ?) WHERE id = ?`, []any{FormatTime(at), id}
+		}
+		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+			return Category{}, fmt.Errorf("store: update category: %w", err)
+		}
+	}
+	c, err := scanCategory(tx.QueryRowContext(ctx, `SELECT `+catCols+` FROM categories WHERE id = ?`, id))
+	if err != nil {
+		return Category{}, fmt.Errorf("store: update category: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Category{}, fmt.Errorf("store: update category: %w", err)
+	}
+	return c, nil
 }
 
 // ArchiveCategory hides a category from pickers; old entries keep resolving its name.

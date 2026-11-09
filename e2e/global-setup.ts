@@ -8,7 +8,7 @@ export default async function globalSetup() {
   const srv = await startServer({ bin: 'kira-e2e', port: E2E_PORT })
   fs.writeFileSync(INFO_FILE, JSON.stringify({ workDir: srv.workDir, dataDir: srv.dataDir }))
 
-  const ctx = await request.newContext({ baseURL: srv.url })
+  const ctx = await request.newContext({ baseURL: srv.url, extraHTTPHeaders: { 'Sec-Fetch-Site': 'same-origin' } })
   const res = await ctx.post('/auth/test-login')
   if (res.status() !== 204) throw new Error(`test-login returned ${res.status()}`)
   await ctx.storageState({ path: STATE_FILE })

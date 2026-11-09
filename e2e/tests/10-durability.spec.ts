@@ -1,11 +1,11 @@
-import { expect, request as pwRequest, test } from '@playwright/test'
+import { expect, request as pwRequest, SAME_ORIGIN, test } from './fixtures'
 import { cleanup, DURABLE_PORT, startServer, stopServer } from '../server'
 import { categories, seed, uniq } from './helpers'
 
 test('SIGKILL then restart on same DATA_DIR keeps entries and verify is ok', async () => {
   let srv = await startServer({ bin: 'kira-e2e', port: DURABLE_PORT })
   try {
-    let api = await pwRequest.newContext({ baseURL: srv.url })
+    let api = await pwRequest.newContext({ baseURL: srv.url, extraHTTPHeaders: SAME_ORIGIN })
     expect((await api.post('/auth/test-login')).status()).toBe(204)
     const cats = await categories(api)
     const payees = [uniq('dur1'), uniq('dur2'), uniq('dur3')]
@@ -20,7 +20,7 @@ test('SIGKILL then restart on same DATA_DIR keeps entries and verify is ok', asy
 
     // restart with the same env / DATA_DIR / keys
     srv = await startServer({ bin: 'kira-e2e', port: DURABLE_PORT, workDir: srv.workDir, env: srv.env })
-    api = await pwRequest.newContext({ baseURL: srv.url })
+    api = await pwRequest.newContext({ baseURL: srv.url, extraHTTPHeaders: SAME_ORIGIN })
     expect((await api.post('/auth/test-login')).status()).toBe(204)
     const list = await (await api.get('/api/entries')).json()
     expect(list.entries.map((e: { id: number }) => e.id).sort()).toEqual([...ids].sort())

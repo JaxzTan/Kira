@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures'
 import { categories, seed, uniq } from './helpers'
 
 test('Settings shows Verified with entry count; verify API ok', async ({ page, request }) => {

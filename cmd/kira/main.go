@@ -5,9 +5,14 @@
 //	kira seed --n N       append N realistic entries (dev/backup drill helper)
 //
 // Configuration comes from .env in the working directory plus the
-// environment (internal/config). verify and seed need only DATA_DIR and
-// LEDGER_KEY. The server listens on 127.0.0.1:PORT; set the optional HOST
-// (e.g. 0.0.0.0) only if a non-local proxy must reach it.
+// environment (internal/config); e2e builds ignore .env. verify and seed
+// need only DATA_DIR and LEDGER_KEY. The server listens on 127.0.0.1:PORT;
+// set the optional HOST (e.g. 0.0.0.0) only if a non-local proxy must reach
+// it, which requires an https PUBLIC_URL. Set TRUST_PROXY=1 behind
+// `tailscale serve` so the /auth rate limit sees real client addresses.
+//
+// Ledger integrity files: DATA_DIR/head (last trusted chain tip, MAC'd) and
+// DATA_DIR/ack (persisted acknowledgement). See api.Integrity.
 package main
 
 import (
@@ -81,13 +86,15 @@ func newLogger(w io.Writer, level slog.Level) *slog.Logger {
 
 // ledgerDeps opens the DB, receipts store and ledger service for cfg.
 type ledgerDeps struct {
-	st   *store.Store
-	rs   *receipts.Store
-	svc  *ledger.Service
-	head *api.HeadFile
+	st    *store.Store
+	rs    *receipts.Store
+	svc   *ledger.Service
+	integ *api.Integrity
 }
 
-func openLedger(ctx context.Context, cfg config.Config) (*ledgerDeps, error) {
+// openLedger opens everything and restores the persisted acknowledgement
+// (DATA_DIR/ack) before any verify can run.
+func openLedger(ctx context.Context, cfg config.Config, log *slog.Logger) (*ledgerDeps, error) {
 	if err := config.EnsureDataDir(cfg.DataDir); err != nil {
 		return nil, err
 	}
@@ -105,12 +112,20 @@ func openLedger(ctx context.Context, cfg config.Config) (*ledgerDeps, error) {
 		st.Close()
 		return nil, err
 	}
-	return &ledgerDeps{st: st, rs: rs, svc: svc, head: api.NewHeadFile(cfg.HeadPath())}, nil
+	integ := api.NewIntegrity(svc, cfg.LedgerKey, cfg.HeadPath(), cfg.AckPath(), log)
+	integ.LoadAck()
+	return &ledgerDeps{st: st, rs: rs, svc: svc, integ: integ}, nil
 }
 
 // ---- serve ----
 
 func cmdServe(ctx context.Context, stdout, stderr io.Writer) int {
+	// First: an e2e test build refuses to run unless KIRA_E2E=1, before it
+	// reads any config or data (normal builds: always nil).
+	if err := auth.E2EGuard(); err != nil {
+		fmt.Fprintln(stderr, "kira:", err)
+		return 2
+	}
 	log := newLogger(stdout, slog.LevelInfo)
 	cfg, err := config.Load(config.ModeServe)
 	if err != nil {
@@ -126,20 +141,28 @@ func cmdServe(ctx context.Context, stdout, stderr io.Writer) int {
 
 func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	log.Info("starting kira", "config", cfg)
-	d, err := openLedger(ctx, cfg)
+	for _, w := range cfg.Warnings {
+		log.Warn(w)
+	}
+	d, err := openLedger(ctx, cfg, log)
 	if err != nil {
 		return err
 	}
 	defer d.st.Close()
 
-	// TR-7: verify on startup against the recorded head; a failure leaves
-	// the app read-only until the owner acknowledges it.
-	res, err := api.VerifyRecorded(ctx, d.svc, d.head, log)
+	// TR-7: verify on startup against the recorded head (and the restored
+	// acknowledgement); a failure leaves the app read-only until the owner
+	// acknowledges it.
+	res, err := d.integ.Verify(ctx)
 	if err != nil {
 		return fmt.Errorf("startup verify: %w", err)
 	}
-	log.Info("ledger head", "head", api.FormatHead(ledger.Head{ID: res.HeadID, Hash: res.HeadHash}), "ok", res.OK)
-	if !res.OK {
+	log.Info("ledger head", "head", ledger.FormatHeadID(ledger.Head{ID: res.HeadID, Hash: res.HeadHash}),
+		"ok", res.OK, "acknowledged", res.Acknowledged)
+	switch {
+	case !res.OK && res.Acknowledged:
+		log.Warn("ledger has acknowledged problems; writes stay enabled until a new problem appears")
+	case !res.OK:
 		log.Warn("ledger is BROKEN: writes are disabled until acknowledged in Settings")
 	}
 
@@ -148,6 +171,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		IssuerURL: cfg.OIDCIssuerURL, RedirectURL: cfg.RedirectURL(),
 		AllowedEmail: cfg.AllowedEmail, AllowedSub: cfg.AllowedSub,
 		SessionSecret: cfg.SessionSecret, Secure: cfg.Secure(), Logger: log,
+		PublicOrigin: cfg.PublicOrigin(),
 	}, d.st)
 	if err != nil {
 		return err
@@ -157,18 +181,14 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		return err
 	}
 	srv, err := api.New(api.Options{
-		Auth: a, Store: d.st, Ledger: d.svc, Receipts: d.rs, Head: d.head, Static: dist, Logger: log,
-		BackupDirs: backupDirs(cfg.DataDir),
+		Auth: a, Store: d.st, Ledger: d.svc, Receipts: d.rs, Integrity: d.integ, Static: dist, Logger: log,
+		BackupDirs: backupDirs(cfg.DataDir), PublicOrigin: cfg.PublicOrigin(), TrustProxy: cfg.TrustProxy,
 	})
 	if err != nil {
 		return err
 	}
 
-	host := os.Getenv("HOST")
-	if host == "" {
-		host = "127.0.0.1"
-	}
-	addr := net.JoinHostPort(host, strconv.Itoa(cfg.Port))
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
 	hs := &http.Server{
 		Addr:              addr,
 		Handler:           srv.Handler(),
@@ -224,24 +244,26 @@ func cmdVerify(ctx context.Context, stdout, stderr io.Writer) int {
 }
 
 // verify prints "ok entries=N head=id:hash" (exit 0) or
-// "BROKEN at id=N reason=..." (exit 1). Other failures exit 2.
+// "BROKEN at id=N reason=... acknowledged=bool" (exit 1). Other failures
+// exit 2. It reads DATA_DIR/head and DATA_DIR/ack but never writes them
+// (safe to run next to a live server).
 func verify(ctx context.Context, cfg config.Config, stdout io.Writer, log *slog.Logger) int {
 	if _, err := os.Stat(cfg.DBPath()); err != nil {
 		fmt.Fprintf(stdout, "error: no ledger database at %s\n", cfg.DBPath())
 		return 2
 	}
-	d, err := openLedger(ctx, cfg)
+	d, err := openLedger(ctx, cfg, log)
 	if err != nil {
 		fmt.Fprintln(stdout, "error:", err)
 		return 2
 	}
 	defer d.st.Close()
-	res, err := api.VerifyRecorded(ctx, d.svc, d.head, log)
+	res, err := d.integ.VerifyReadOnly(ctx)
 	if err != nil {
 		fmt.Fprintln(stdout, "error:", err)
 		return 2
 	}
-	head := api.FormatHead(ledger.Head{ID: res.HeadID, Hash: res.HeadHash})
+	head := ledger.FormatHeadID(ledger.Head{ID: res.HeadID, Hash: res.HeadHash})
 	if res.OK {
 		fmt.Fprintf(stdout, "ok entries=%d head=%s\n", res.Entries, head)
 		return 0
@@ -254,6 +276,7 @@ func verify(ctx context.Context, cfg config.Config, stdout io.Writer, log *slog.
 	if res.Reason != nil {
 		reason = *res.Reason
 	}
-	fmt.Fprintf(stdout, "BROKEN at id=%d reason=%s entries=%d head=%s problems=%d\n", id, reason, res.Entries, head, len(res.Problems))
+	fmt.Fprintf(stdout, "BROKEN at id=%d reason=%s entries=%d head=%s problems=%d acknowledged=%t\n",
+		id, reason, res.Entries, head, len(res.Problems), res.Acknowledged)
 	return 1
 }

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures'
 import { categories, monthOf, row, seed, today, uniq } from './helpers'
 
 test('filter by category, method, month; search by payee and note', async ({ page, request }) => {

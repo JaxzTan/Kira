@@ -15,6 +15,7 @@ import (
 	"github.com/JaxzTan/kira/internal/auth"
 	"github.com/JaxzTan/kira/internal/export"
 	"github.com/JaxzTan/kira/internal/ledger"
+	"github.com/JaxzTan/kira/internal/receipts"
 )
 
 // ---- me ----
@@ -41,6 +42,10 @@ func pathID(r *http.Request, name string) (int64, error) {
 func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	f := ledger.Filter{From: q.Get("from"), To: q.Get("to"), Method: q.Get("method"), Q: q.Get("q"), Status: q.Get("status")}
+	if f.From != "" && f.To != "" && f.From > f.To {
+		s.fail(w, r, errBadRequest("from must not be after to"))
+		return
+	}
 	if c := q.Get("category"); c != "" {
 		id, err := strconv.ParseInt(c, 10, 64)
 		if err != nil || id <= 0 {
@@ -126,17 +131,13 @@ func (s *Server) handleVoid(w http.ResponseWriter, r *http.Request) {
 	s.appended(w, r)(s.ledger.Void(r.Context(), id, in.Reason))
 }
 
-// appended writes the 201 for a committed append and advances DATA_DIR/head.
+// appended writes the 201 for a committed append. DATA_DIR/head was
+// already advanced by the ledger append hook (Integrity.onAppend).
 func (s *Server) appended(w http.ResponseWriter, r *http.Request) func(ledger.AppendResult, error) {
 	return func(res ledger.AppendResult, err error) {
 		if err != nil {
 			s.fail(w, r, err)
 			return
-		}
-		if wrote, herr := s.head.Advance(res.Row); herr != nil {
-			s.log.Error("could not record ledger head", "err", herr)
-		} else if !wrote {
-			s.log.Info("ledger head file not advanced (non-contiguous append); next verify records it", "id", res.Row.ID)
 		}
 		writeJSON(w, http.StatusCreated, toAppendResult(res))
 	}
@@ -187,8 +188,11 @@ func multipartErr(err error) error {
 }
 
 func (s *Server) handleGetReceipt(w http.ResponseWriter, r *http.Request) {
-	f, info, err := s.receipts.Open(chi.URLParam(r, "sha"))
+	f, info, err := s.receipts.OpenVerified(chi.URLParam(r, "sha"))
 	if err != nil {
+		if errors.Is(err, receipts.ErrTampered) {
+			s.log.Warn("receipt file does not match its hash", "sha256", chi.URLParam(r, "sha"))
+		}
 		s.fail(w, r, err)
 		return
 	}
@@ -260,28 +264,11 @@ func (s *Server) handlePatchCategory(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, errBadRequest("nothing to update: send name and/or archived"))
 		return
 	}
-	ctx := r.Context()
-	c, err := s.store.GetCategory(ctx, id)
+	// Rename and archive apply in one transaction (all or nothing).
+	c, err := s.store.UpdateCategory(r.Context(), id, in.Name, in.Archived, s.now())
 	if err != nil {
 		s.fail(w, r, err)
 		return
-	}
-	if in.Name != nil {
-		if c, err = s.store.RenameCategory(ctx, id, *in.Name); err != nil {
-			s.fail(w, r, err)
-			return
-		}
-	}
-	if in.Archived != nil {
-		if *in.Archived {
-			c, err = s.store.ArchiveCategory(ctx, id, s.now())
-		} else {
-			c, err = s.store.UnarchiveCategory(ctx, id)
-		}
-		if err != nil {
-			s.fail(w, r, err)
-			return
-		}
 	}
 	writeJSON(w, http.StatusOK, toCategory(c))
 }
@@ -311,13 +298,13 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, errBadRequest("format must be csv or zip"))
 		return
 	}
+	if from > to {
+		s.fail(w, r, errBadRequest("from must not be after to"))
+		return
+	}
 	rows, err := s.ledger.ExportEntries(r.Context(), from, to)
 	if err != nil {
 		s.fail(w, r, err)
-		return
-	}
-	if from > to {
-		s.fail(w, r, errBadRequest("from must not be after to"))
 		return
 	}
 	name := "kira-" + from + "_" + to
@@ -333,7 +320,9 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(buf.Bytes())
 		return
 	}
-	// Zip is streamed (receipts can be large); an error mid-stream can only be logged.
+	// Zip is streamed (receipts can be large); an error mid-stream can only be
+	// logged. Receipts that no longer match their hash are listed in
+	// TAMPERED_RECEIPTS.txt by export.WriteZip.
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`.zip"`)
 	w.Header().Set("Cache-Control", "no-store")
@@ -345,7 +334,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 // ---- ledger ----
 
 func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
-	res, err := VerifyRecorded(r.Context(), s.ledger, s.head, s.log)
+	res, err := s.integ.Verify(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -353,25 +342,22 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toVerifyResult(res, s.lastBackup()))
 }
 
-// handleAcknowledge re-enables writes after a failed verify (TR-7). If no
-// verify has run in this process yet, one runs first. After acknowledging a
-// broken ledger the current head is recorded, so an acknowledged tail
-// deletion is not reported again on the next verify (ledger docs).
+// handleAcknowledge re-enables writes after a failed verify (TR-7). The
+// acknowledgement is recorded in integrity_events by the ledger and
+// persisted to DATA_DIR/ack so it survives restarts; a later verify that
+// finds only acknowledged problems stays acknowledged, any new problem
+// blocks writes again.
 func (s *Server) handleAcknowledge(w http.ResponseWriter, r *http.Request) {
-	if _, ran := s.ledger.LastVerify(); !ran {
-		if _, err := VerifyRecorded(r.Context(), s.ledger, s.head, s.log); err != nil {
-			s.fail(w, r, err)
-			return
-		}
+	res, err := s.integ.Acknowledge(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
 	}
-	res, _ := s.ledger.Acknowledge()
 	if !res.OK {
-		hd := ledger.Head{ID: res.HeadID, Hash: res.HeadHash}
-		if err := s.head.Write(hd); err != nil {
-			s.log.Error("could not record ledger head", "err", err)
-		}
-		s.log.Warn("broken ledger acknowledged by owner; writes re-enabled", "head", FormatHead(hd),
-			"broken_at", derefInt(res.BrokenAt), "reason", derefStr(res.Reason), "at", s.now().UTC().Format(time.RFC3339))
+		s.log.Warn("broken ledger acknowledged by owner; writes re-enabled",
+			"head", ledger.FormatHeadID(ledger.Head{ID: res.HeadID, Hash: res.HeadHash}),
+			"broken_at", derefInt(res.BrokenAt), "reason", derefStr(res.Reason),
+			"problems", len(res.Problems), "at", s.now().UTC().Format(time.RFC3339))
 	}
 	writeJSON(w, http.StatusOK, toVerifyResult(res, s.lastBackup()))
 }

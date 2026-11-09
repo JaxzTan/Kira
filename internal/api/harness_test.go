@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -45,7 +47,9 @@ type harness struct {
 	svc    *ledger.Service
 	rs     *receipts.Store
 	mem    *memstore.Store
-	head   *HeadFile
+	integ  *Integrity
+	key    []byte
+	log    *slog.Logger
 	srv    *Server
 	h      http.Handler
 	token  string
@@ -88,8 +92,13 @@ func newHarness(t *testing.T, mutate ...func(*Options)) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	head := NewHeadFile(filepath.Join(dir, "head"))
-	opts := Options{Auth: a, Store: st, Ledger: svc, Receipts: rs, Head: head, Static: testStatic, Logger: log}
+	integ := NewIntegrity(svc, key, filepath.Join(dir, "head"), filepath.Join(dir, "ack"), log)
+	integ.LoadAck()
+	// Same as `kira serve`: verify once at startup (records head 0:genesis).
+	if _, err := integ.Verify(ctx); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{Auth: a, Store: st, Ledger: svc, Receipts: rs, Integrity: integ, Static: testStatic, Logger: log}
 	for _, m := range mutate {
 		m(&opts)
 	}
@@ -110,7 +119,7 @@ func newHarness(t *testing.T, mutate ...func(*Options)) *harness {
 	if err := mem.CreateSession(ctx, hex.EncodeToString(sum[:]), testEmail, testSub, "test", now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	return &harness{t: t, dir: dir, st: st, svc: svc, rs: rs, mem: mem, head: head, srv: srv,
+	return &harness{t: t, dir: dir, st: st, svc: svc, rs: rs, mem: mem, integ: integ, key: key, log: log, srv: srv,
 		h: srv.Handler(), token: token, logs: logs, remote: "192.0.2.10:5555"}
 }
 
@@ -135,8 +144,47 @@ func (h *harness) req(method, path string, body any) *http.Request {
 	if ct != "" {
 		r.Header.Set("Content-Type", ct)
 	}
+	// What a browser sends for the app's own fetch() calls (CSRF check).
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
 	r.RemoteAddr = h.remote
 	return r
+}
+
+// head returns the trusted recorded head (fails the test if untrusted).
+func (h *harness) head() ledger.Head {
+	h.t.Helper()
+	hd, reason := h.integ.ReadHead()
+	if hd == nil {
+		h.t.Fatalf("head file untrusted: %s", reason)
+	}
+	return *hd
+}
+
+// tamperRow edits a stored row through a second DB handle, dropping the
+// append-only triggers first, the way an attacker with file access would.
+func (h *harness) tamperRow(id int64) {
+	h.t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(h.dir, "kira.db"))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer db.Close()
+	for _, tr := range []string{"entries_no_update", "entries_no_delete"} {
+		if _, err := db.Exec(`DROP TRIGGER IF EXISTS ` + tr); err != nil {
+			h.t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`UPDATE entries SET payee = 'Tampered' WHERE id = ?`, id); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// writeHead writes a validly MAC'd head file (simulating an older state).
+func (h *harness) writeHead(hd ledger.Head) {
+	h.t.Helper()
+	if err := os.WriteFile(h.integ.HeadPath(), []byte(ledger.FormatHeadFile(h.key, hd)), 0o600); err != nil {
+		h.t.Fatal(err)
+	}
 }
 
 func (h *harness) authed(r *http.Request) *http.Request {

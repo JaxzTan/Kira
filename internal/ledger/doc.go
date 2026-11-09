@@ -41,6 +41,27 @@
 //
 // Verify recomputes this for every row in id order and reports the first
 // bad row (broken_at) with a reason: "id gap", "prev_hash mismatch",
-// "hash mismatch", "invalid column type" or "head mismatch" (the last only
-// when a previously recorded head is supplied; it catches deleted tail rows).
+// "hash mismatch", "invalid column type"; "head mismatch" / "head missing" /
+// "head invalid" (from VerifyOptions: recorded head file, see headmac.go);
+// and "receipt mismatch" / "receipt missing" (each distinct referenced
+// receipt is re-hashed once; broken_at = first row referencing it).
+//
+// # Acknowledgement and locking
+//
+// A failed, unacknowledged verify blocks writes. Acknowledge covers the
+// problems by Problem.Key; later verifies whose problems are a subset stay
+// acknowledged (see ack.go). The acknowledged set is exported/imported with
+// ExportAck/ImportAck and every acknowledgement is recorded in the
+// append-only integrity_events table.
+//
+// The write mutex serialises Append, VerifyLocked, Acknowledge and
+// WithWriteLock. SetAppendHook runs a callback after each commit while the
+// mutex is held, so a head file can be advanced strictly in chain order.
+//
+// # Categories are outside the chain
+//
+// Entries hash category_id, not the category name. Renaming a category
+// (store.UpdateCategory) changes the label shown for historic entries and in
+// exports without touching the chain. Deferred: a v1.1 migration should
+// snapshot category_name per row.
 package ledger

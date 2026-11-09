@@ -7,7 +7,7 @@
 | 2 · Wire API + real frontend | ✅ done | kira-api → kira-frontend | — |
 | 🛑 A · Google OAuth credentials | 🟦 waiting on Jaxz | — | **Jaxz** |
 | 3 · Real login + E2E | ⬜ todo | kira-tester (+ fixes) | after A |
-| 4 · Review + hardening | ⬜ todo | kira-reviewer (+ agency reviewers if installed) | — |
+| 4 · Review + hardening | ✅ done (early, during Gate A) | kira-reviewer (+ agency reviewers if installed) | — |
 | 🛑 B · Backup target (optional) | ⬜ waiting | — | **Jaxz** |
 | 5 · Ops + restore drill + README | ⬜ todo | kira-ops | after B or local fallback |
 
@@ -90,8 +90,11 @@ Claude posts the exact Google Cloud Console steps, then waits for **"creds ready
 - [ ] fix failures; commit `test: e2e`
 
 ## Phase 4 · Review + hardening
-- [ ] kira-reviewer: security review vs TRD §7, traceability FR → TR → test
-- [ ] apply fixes; re-run `make check` + `make e2e`; commit `fix: review findings`
+- [x] kira-reviewer: security review vs TRD §7, traceability FR → TR → test
+  - + agency reviewers in parallel: Code Reviewer, AppSec Engineer, API Tester, Reality Checker. 0 P0, 4 P1 (receipt swap undetected, e2e binary unguarded, 45,90 parsed as RM 4,590, receipt upload race), ~15 P2 — all P1 + most P2 fixed.
+- [x] apply fixes; re-run `make check` + `make e2e`; commit `fix: review findings`
+  - Open (Jaxz decision): live data in iCloud Drive (AppSec HIGH) → scripts/install-macos.sh ready, not run.
+  - [x] kira-api Phase 4 fixes (2026-11-09): new ledger APIs adopted (`api.Integrity`: MAC'd `DATA_DIR/head` written only from the append hook / verify / acknowledge callbacks under the write lock, forward-only, fail closed on missing/invalid; legacy `id:hash` files are treated as **invalid** (one acknowledgement), not silently upgraded, because an unauthenticated legacy file would bypass the MAC). `DATA_DIR/ack` persisted (0600, atomic, HMAC'd with HKDF(LEDGER_KEY,"kira-ack") so a forged file is ignored), imported before the first verify; `kira verify` reads both files and writes neither. CSRF (`auth.SameOrigin`) on every non-GET /api request → 403 `forbidden` "cross-site request"; CORP header. `GET /api/receipts/:sha` → 409 on tamper. e2e guard first in `kira serve`; e2e builds skip `.env`. Config: OIDC_ISSUER_URL e2e-only (WARN otherwise), HOST in config (non-loopback + http PUBLIC_URL refused), TRUST_PROXY, rate-limit map capped at 10k, iCloud WARN. PATCH category via `UpdateCategory`; from>to → 400 before querying (list + export). Go: 52 tests / 226 incl. subtests in api+config+cmd; `go test ./...` and `-tags e2e` green; `make check` green; binary smoke passed. Deferred: exposing integrity events in Settings (no DTO change).
 
 ## 🛑 Gate B · Backup target (Jaxz, optional)
 - [ ] Jaxz fills LITESTREAM_* in `.env`, or replies "local backup" to use `./backup`
@@ -107,6 +110,8 @@ _(subagents add notes here)_
 - **kira-auth → kira-ledger**: implement `auth.Store` (internal/auth/auth.go) in internal/store with exactly those signatures. Needs `sessions` to have `email` and `google_sub` columns (TRD §4 lacks them). `PinOwner` must be insert-once (return an error if an owner already exists). `GetSession` returns found=false (nil err) for a missing row. `DeleteSession` on `sessions` is allowed (not append-only).
 - **kira-auth → kira-api**: build `auth.Config` from env (IssuerURL empty = Google; RedirectURL = PUBLIC_URL+"/auth/google/callback"; Secure = PUBLIC_URL is https; SessionSecret >= 32 bytes). Mount `a.Routes(r)` under the /auth rate limiter, wrap /api/* with `a.Middleware`, and use `auth.UserFrom(ctx)` for /api/me. Use `internal/auth/memstore` + `auth.WithUser` in handler tests. Logout/test-login are bodyless POSTs, so exempt them from the JSON Content-Type rule (SameSite=Lax still applies).
 - **kira-ledger → kira-auth**: done. `*store.Store` matches `auth.Store` exactly. `PinOwner` is a no-op for the same sub and returns `store.ErrOwnerMismatch` for a different sub.
+- **kira-auth → kira-api (Phase 4)**: (1) call `auth.E2EGuard()` at startup and exit on error (e2e builds require `KIRA_E2E=1`; normal builds always nil). (2) Set `auth.Config.PublicOrigin` = scheme://host[:port] of PUBLIC_URL. (3) Use `auth.SameOrigin(r, publicOrigin)` for non-GET /api/* (403 `forbidden` "cross-site request"); logout already enforces it. (4) Session cookie is `__Host-kira_session` when `Secure`, else `kira_session`; use `a.SessionCookieName()` instead of `auth.SessionCookie`. `internal/api` `TestLogoutThroughRouter` (api_test.go:596) now needs `Sec-Fetch-Site: same-origin` on the logout request. /auth/test-login answers 404 unless the TCP peer is loopback (X-Forwarded-For ignored).
+- **kira-auth → kira-tester (Phase 4)**: start `bin/kira-e2e` with `KIRA_E2E=1` and call /auth/test-login via 127.0.0.1/::1. Logout from the browser sends Sec-Fetch-Site, so it passes; direct API calls need `Sec-Fetch-Site: same-origin` or a matching `Origin`.
 - **kira-ledger → kira-api** (wiring): `st := store.Open(ctx, DB_PATH)`; `rs := receipts.New(dataDir+"/receipts")`; `svc := ledger.New(ledger.Config{Store: st, Key: key, Receipts: rs})`. At startup call `svc.Verify` (or `svc.VerifyAgainst(ctx, &lastHead)` when a previous head is known), then log `svc.Head()`. Error mapping:
   - 422 `validation`: `*ledger.ValidationError` (`.Fields`) and `*store.NameError` (`.Field`)
   - 422 `date_confirm_required`: `ledger.ErrDateConfirmRequired`
@@ -130,9 +135,41 @@ _(subagents add notes here)_
 - **kira-api → kira-frontend**: 423 `ledger_broken` can come from category create/rename/archive and receipt upload, not only entry writes; show the banner for those too.
 
 - **kira-tester → kira-ops**: `make e2e` assumes the Playwright Chromium browser is installed. Please add `cd e2e && npx playwright install chromium` (idempotent) after `npm --prefix e2e ci` in the `e2e` target, otherwise a fresh machine fails with "Executable doesn't exist".
+- **kira-ledger → kira-api (Phase 4 ledger fixes)**. `internal/api` does NOT compile until handlers.go:367 adopts the new `Acknowledge` signature. New/changed exported APIs:
+  - `ledger.(*Service).Acknowledge(ctx, recordedHead string, onAck func(VerifyResult) error) (VerifyResult, bool, error)` (CHANGED). Holds the write mutex, inserts an `integrity_events` row (kind `acknowledge`, recorded_head = the arg, `""` = NULL, actual_head, problems JSON), then runs `onAck` under the mutex: write the head file and the ack file there. No event and no `onAck` when the last verify was OK.
+  - `ledger.(*Service).VerifyLocked(ctx, VerifyOptions, fn func(VerifyResult) error) (VerifyResult, error)`: verify + record under the write mutex, then `fn` (write head/ack files). Also available: `VerifyWith(ctx, VerifyOptions)` (no lock), `WithWriteLock(fn func() error) error`.
+  - `ledger.VerifyOptions{Expected *Head; HeadReason string}`. HeadReason is `ledger.ReasonHeadMissing` or `ledger.ReasonHeadInvalid` when DATA_DIR/head is absent, malformed or has a bad MAC. It only counts when entries exist, and `broken_at` is the current head id. New reasons: `ReasonHeadMissing`, `ReasonHeadInvalid`, `ReasonReceiptMismatch`, `ReasonReceiptMissing`. `Problem` gained `Detail` (receipt sha or recorded head) and `Key()`.
+  - `ledger.(*Service).SetAppendHook(fn func(Row))`: runs after every commit while the mutex is held, rows strictly in chain order. Use it to write the head file. It cannot fail the append, so log any error inside it.
+  - `ledger.(*Service).ExportAck() ([]byte, error)` (nil = nothing acknowledged, so remove DATA_DIR/ack) and `ImportAck([]byte) error` (call before the first verify at startup). `AckState()` returns the struct.
+  - `ledger.(*Service).IntegrityEvents(ctx, limit int) ([]store.IntegrityEvent, error)`, newest first. Store-level: `store.(*Store).InsertIntegrityEvent`, `RecentIntegrityEvents`.
+  - Head MAC: `ledger.HeadMAC(key []byte, id int64, hash string) string`, `ledger.CheckHeadMAC(key, id, hash, mac) bool`, `ledger.FormatHeadFile(key, Head) string` ("id:hash:mac\n"), `ledger.ParseHeadFile(key, content string) (Head, error)` (returns `ledger.ErrHeadInvalid`), `ledger.FormatHeadID(Head) string`. HKDF is stdlib `crypto/hkdf`: SHA-256, no salt, info "kira-head", 32 bytes.
+  - Receipts: `receipts.(*Store).OpenVerified(sha) (*os.File, Info, error)` returns `receipts.ErrTampered` (map to 409 `conflict`). `ErrCorrupt` remains as an alias. Verify re-hashes receipts automatically because `*receipts.Store` implements `ledger.ReceiptVerifier`.
+  - `store.(*Store).UpdateCategory(ctx, id int64, name *string, archived *bool, at time.Time) (Category, error)`: rename and archive in one transaction. Use it for PATCH instead of Rename+Archive.
+  - Validation: `income` is a 422 on `direction`. `receipt_sha256: ""` is a 422. All failing fields come back in one `*ValidationError`, including unknown or archived `category_id`.
+  - Export: `WriteZip` adds `TAMPERED_RECEIPTS.txt`. Signature unchanged.
+
+- **kira-api → kira-ledger (Phase 4)**: with an *invalid* (garbled / bad-MAC) head file and **zero** entries, verify is OK because `HeadReason` only counts when entries exist, so "delete every row + garble the head file" verifies clean (the API then overwrites the file). Suggest: `ReasonHeadInvalid` counts even on an empty ledger (`ReasonHeadMissing` must stay exempt for fresh installs).
+  - **kira-ledger**: done. `ReasonHeadInvalid` now fails verify even with zero entries (`broken_at` = 0, `head_id` = 0); `ReasonHeadMissing` stays exempt on an empty ledger. Documented on `VerifyOptions.HeadReason`; covered by `TestHeadReasons`. No internal/api changes needed, all api tests pass.
+- **kira-api → kira-ops (Phase 4)**: document in `.env.example`: `TRUST_PROXY=` (set `1` behind `tailscale serve` so the /auth rate limit sees client IPs; default off) and that `HOST` other than loopback now requires an https `PUBLIC_URL` (startup refuses otherwise). `OIDC_ISSUER_URL` is ignored (WARN) in normal builds. `kira serve` logs WARN "data is in iCloud Drive; run scripts/install-macos.sh" when DATA_DIR or the loaded .env is under ~/Library/Mobile Documents (true for `make dev` from this repo). `backup-test.sh` already copies `head`; a real Litestream restore has no `head`/`ack`, so the first verify reports "head missing" and needs one acknowledgement (document in README restore steps). `kira verify` output gained ` acknowledged=true|false`.
+- **kira-api → kira-tester (Phase 4)**: every non-GET /api call needs `Sec-Fetch-Site: same-origin` (or `Origin: <PUBLIC_URL origin>`); Playwright `request` fixtures do not send it, so set `extraHTTPHeaders: {'Sec-Fetch-Site': 'same-origin'}` (or Origin) in playwright.config / `request.newContext`. bin/kira-e2e ignores `.env` and exits 2 without `KIRA_E2E=1`.
+- **kira-api → kira-frontend (Phase 4)**: `GET /api/receipts/:sha` can now return 409 `conflict` (file tampered); show "receipt file changed since upload" instead of a broken image. Integrity events are not exposed yet (deferred, no DTO).
+
+## Deferred
+- **Integrity events in Settings** (kira-api, Phase 4): `ledger.Service.IntegrityEvents` exists; exposing it needs a DTO/contract change (main). Not done.
+- **Category names are outside the hash chain** (kira-ledger, Phase 4): entries hash `category_id` only, so renaming a category relabels historic entries and CSV exports. A v1.1 migration should snapshot `category_name` per entries row (hashed) and export that.
 
 ## Log
 _(one line per phase completion)_
+- Phase 4 ✅ 5 reviewers; fixed receipt integrity, e2e guard, CSRF, MAC'd head + persisted ack + integrity_events, money/upload races; make check green, e2e 19/19
 - Phase 2 ✅ API wired (126 Go api/config/cli tests), frontend on real API (57 web tests), real-server walkthrough pass, CSP data:-font bug fixed
 - Phase 1 ✅ ledger (195 tests, REPLACE-bypass triggers added), auth (50/53 tests, fake OIDC), frontend (6 pages, 43 tests, mock API), ops (Makefile + deploy units)
 - Phase 0 ✅ scaffold, Tailwind theme, API contract (md + dto.go + types.ts), make check green
+
+## Review findings (kira-reviewer)
+_Phase 4 early pass, 2026-11-09, during Gate A. `go vet` and `go test ./...` pass (also with `-tags e2e`). The normal binary has no test-login symbols or strings; the e2e binary does. No UPDATE/DELETE on entries/auth_log outside tests. The only INSERT INTO entries is ledger.Service.Append. Every query is parameterised. No float money._
+- **P0:** none.
+- **P1-1 (kira-ledger + kira-api):** receipt swap is not detected. `receipts.VerifyFile` (internal/receipts/receipts.go:251) is never called. Fix: re-hash every referenced receipt during verify, on GET /api/receipts/:sha and in the zip export. Report a mismatch or missing file as a problem.
+- **P1-2 (kira-auth/kira-api):** `bin/kira-e2e` has no guard (internal/auth/testlogin_e2e.go:14). If it runs from the repo root, it uses the real .env and data/. Then an unauthenticated POST mints a session, and while no owner is pinned (now, Gate A) it pins `e2e-test-sub` in the insert-once owner table, which locks out real login. Fix: refuse to start unless `KIRA_E2E=1`, refuse if the owner is pinned to another sub, and log a WARN banner at startup.
+- **P2:** Origin/Sec-Fetch-Site check on /api POST/PATCH and /auth/logout. Bodyless acknowledge and multipart uploads count as "simple" requests, and in dev other localhost ports are same-site (internal/api/server.go:166,182). · Reject `direction=income` in v1, because totals ignore direction (internal/ledger/validate.go:111, query.go:170,215). · Lower MaxPixels or limit decodes to one at a time (receipts.go:33). · Allow OIDC_ISSUER_URL only in test builds (config.go:138). · Refuse a non-loopback HOST while PUBLIC_URL is http (cmd/kira/main.go:167). · Add `.env.*` (except `!.env.example`) to .gitignore. · Add an NFR-6 benchmark. · Categories are outside the chain, so a rename changes old exports (document this, or snapshot the name in a later migration).
+- **Untested Must/Should:** FR-1/FR-2 with real Google (Gate A / Phase 3), NFR-4/TR-11 restore (Phase 5), NFR-6 performance, the NFR-7 phone layout, and receipt-swap detection (P1-1).
+- **kira-tester (Phase 4 follow-up)**: e2e suite now 19 tests green x2 (~9 s). Launcher sets KIRA_E2E=1; API contexts send `Sec-Fetch-Site: same-origin` (e2e/tests/fixtures.ts). New specs 11-15: e2e guard, CSRF, "45,90", receipt race, receipt tamper + ack across restart. No product bugs found.

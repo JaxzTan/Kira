@@ -112,38 +112,38 @@ func TestCallback(t *testing.T) {
 		{name: "unknown code", run: func(h *harness) *httptest.ResponseRecorder {
 			ls := h.startLogin()
 			return h.callback(ls.state, "never-issued", ls.cookie)
-		}, wantStatus: 403, wantResult: ResultRejectToken},
+		}, wantStatus: 403, wantResult: ""},
 		{name: "missing code", run: func(h *harness) *httptest.ResponseRecorder {
 			ls := h.startLogin()
 			return h.callback(ls.state, "", ls.cookie)
-		}, wantStatus: 403, wantResult: ResultRejectToken},
+		}, wantStatus: 403, wantResult: ""},
 		{name: "bad state", run: func(h *harness) *httptest.ResponseRecorder {
 			ls := h.startLogin()
 			h.idp.issue("code-1", sign(t, h.idp.key, h.defaultClaims(ls)), ls.challenge)
 			return h.callback("forged-state", "code-1", ls.cookie)
-		}, wantStatus: 400, wantResult: ResultRejectState},
+		}, wantStatus: 400, wantResult: ""},
 		{name: "missing state", run: func(h *harness) *httptest.ResponseRecorder {
 			ls := h.startLogin()
 			return h.callback("", "code-1", ls.cookie)
-		}, wantStatus: 400, wantResult: ResultRejectState},
+		}, wantStatus: 400, wantResult: ""},
 		{name: "missing oauth cookie", run: func(h *harness) *httptest.ResponseRecorder {
 			ls := h.startLogin()
 			return h.callback(ls.state, "code-1", nil)
-		}, wantStatus: 400, wantResult: ResultRejectState},
+		}, wantStatus: 400, wantResult: ""},
 		{name: "tampered oauth cookie", run: func(h *harness) *httptest.ResponseRecorder {
 			ls := h.startLogin()
 			c := *ls.cookie
 			c.Value = "x" + c.Value[1:]
 			return h.callback(ls.state, "code-1", &c)
-		}, wantStatus: 400, wantResult: ResultRejectState},
+		}, wantStatus: 400, wantResult: ""},
 		{name: "oauth cookie older than 10 min", run: func(h *harness) *httptest.ResponseRecorder {
 			ls := h.startLogin()
 			h.clock.Add(11 * time.Minute)
 			h.idp.issue("code-1", sign(t, h.idp.key, h.defaultClaims(ls)), ls.challenge)
 			return h.callback(ls.state, "code-1", ls.cookie)
-		}, wantStatus: 400, wantResult: ResultRejectState},
+		}, wantStatus: 400, wantResult: ""},
 		{name: "wrong client secret", cfg: func(c *Config) { c.ClientSecret = "nope" }, run: login(nil),
-			wantStatus: 403, wantResult: ResultRejectToken},
+			wantStatus: 403, wantResult: ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -160,8 +160,16 @@ func TestCallback(t *testing.T) {
 			if got := h.lastResult(); got != c.wantResult {
 				t.Fatalf("auth_log result = %q, want %q", got, c.wantResult)
 			}
-			if n := len(h.store.AuthLog()); n != 1 {
-				t.Fatalf("auth_log rows = %d, want 1", n)
+			wantRows := 1
+			if c.wantResult == "" { // unauthenticated failure: slog WARN only
+				wantRows = 0
+				if !strings.Contains(h.logs.String(), "level=WARN") ||
+					!strings.Contains(h.logs.String(), "result="+ResultRejectState) {
+					t.Fatalf("missing WARN reject_state log: %s", h.logs)
+				}
+			}
+			if n := len(h.store.AuthLog()); n != wantRows {
+				t.Fatalf("auth_log rows = %d, want %d", n, wantRows)
 			}
 			pinned, _, _ := h.store.OwnerSub(t.Context())
 			if pinned != c.wantPinned {
@@ -178,7 +186,7 @@ func TestCallback(t *testing.T) {
 				if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 					t.Fatalf("content-type = %q", ct)
 				}
-				if c.wantStatus == 403 && c.wantResult != ResultRejectToken &&
+				if c.wantStatus == 403 && c.wantResult != ResultRejectToken && c.wantResult != "" &&
 					!strings.Contains(rec.Body.String(), "This Google account is not allowed into Kira") {
 					t.Fatalf("403 page text missing: %s", rec.Body)
 				}
@@ -227,12 +235,19 @@ func TestSessionCookie(t *testing.T) {
 	for _, secure := range []bool{false, true} {
 		h := newHarness(t, func(c *Config) { c.Secure = secure })
 		rec := h.login(nil)
-		c := findCookie(rec, SessionCookie)
+		name, other := SessionCookie, SecureSessionCookie
+		if secure {
+			name, other = SecureSessionCookie, SessionCookie
+		}
+		if h.auth.SessionCookieName() != name || findCookie(rec, other) != nil {
+			t.Fatalf("secure=%v: wrong cookie name", secure)
+		}
+		c := findCookie(rec, name)
 		if c == nil {
 			t.Fatal("no session cookie")
 		}
 		if !c.HttpOnly || c.SameSite != http.SameSiteLaxMode || c.Secure != secure ||
-			c.Path != "/" || c.MaxAge != 2592000 {
+			c.Path != "/" || c.Domain != "" || c.MaxAge != 2592000 {
 			t.Fatalf("bad flags: %+v", c)
 		}
 		if _, ok := parseToken(c.Value); !ok {
@@ -324,6 +339,7 @@ func TestLogout(t *testing.T) {
 	h := newHarness(t, nil)
 	sc := findCookie(h.login(nil), SessionCookie)
 	req := httptest.NewRequest("POST", "/auth/logout", nil)
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.AddCookie(&http.Cookie{Name: SessionCookie, Value: sc.Value})
 	rec := h.do(req)
 	if rec.Code != http.StatusNoContent {
@@ -339,7 +355,9 @@ func TestLogout(t *testing.T) {
 		t.Fatalf("api after logout = %d", rec.Code)
 	}
 	// No session → 401.
-	if rec := h.do(httptest.NewRequest("POST", "/auth/logout", nil)); rec.Code != 401 {
+	noSess := httptest.NewRequest("POST", "/auth/logout", nil)
+	noSess.Header.Set("Sec-Fetch-Site", "same-origin")
+	if rec := h.do(noSess); rec.Code != 401 {
 		t.Fatalf("logout without session = %d", rec.Code)
 	}
 	if rec := h.do(httptest.NewRequest("GET", "/auth/logout", nil)); rec.Code != http.StatusMethodNotAllowed {
@@ -394,5 +412,131 @@ func TestUserFrom(t *testing.T) {
 	u, ok := UserFrom(WithUser(t.Context(), User{Email: "a", Sub: "b"}))
 	if !ok || u.Email != "a" || u.Sub != "b" || u.Name != nil || u.Picture != nil {
 		t.Fatalf("got %+v %v", u, ok)
+	}
+}
+
+func TestSameOrigin(t *testing.T) {
+	const pub = "https://kira.example.com"
+	cases := []struct {
+		name    string
+		headers map[string][]string
+		public  string
+		want    bool
+	}{
+		{"sec-fetch-site same-origin", map[string][]string{"Sec-Fetch-Site": {"same-origin"}}, pub, true},
+		{"sec-fetch-site same-origin, no public origin", map[string][]string{"Sec-Fetch-Site": {"same-origin"}}, "", true},
+		{"sec-fetch-site wins over matching origin", map[string][]string{"Sec-Fetch-Site": {"cross-site"}, "Origin": {pub}}, pub, false},
+		{"sec-fetch-site same-site", map[string][]string{"Sec-Fetch-Site": {"same-site"}}, pub, false},
+		{"sec-fetch-site none", map[string][]string{"Sec-Fetch-Site": {"none"}}, pub, false},
+		{"duplicate sec-fetch-site", map[string][]string{"Sec-Fetch-Site": {"same-origin", "cross-site"}}, pub, false},
+		{"matching origin", map[string][]string{"Origin": {pub}}, pub, true},
+		{"matching origin, public has trailing slash", map[string][]string{"Origin": {pub}}, pub + "/", true},
+		{"matching origin with port", map[string][]string{"Origin": {"http://localhost:5173"}}, "http://localhost:5173", true},
+		{"mismatched origin", map[string][]string{"Origin": {"https://evil.example"}}, pub, false},
+		{"origin wrong scheme", map[string][]string{"Origin": {"http://kira.example.com"}}, pub, false},
+		{"origin wrong port", map[string][]string{"Origin": {"http://localhost:5174"}}, "http://localhost:5173", false},
+		{"origin null", map[string][]string{"Origin": {"null"}}, pub, false},
+		{"origin but no public origin configured", map[string][]string{"Origin": {pub}}, "", false},
+		{"missing both", nil, pub, false},
+		{"missing both, no public origin", nil, "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := httptest.NewRequest("POST", "/api/entries", nil)
+			for k, vs := range c.headers {
+				for _, v := range vs {
+					r.Header.Add(k, v)
+				}
+			}
+			if got := SameOrigin(r, c.public); got != c.want {
+				t.Fatalf("SameOrigin = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestLogoutCSRF(t *testing.T) {
+	const pub = "http://kira.test"
+	cases := []struct {
+		name       string
+		public     string
+		headers    map[string]string
+		wantStatus int
+	}{
+		{"sec-fetch-site same-origin", pub, map[string]string{"Sec-Fetch-Site": "same-origin"}, 204},
+		{"sec-fetch-site same-origin, no PublicOrigin", "", map[string]string{"Sec-Fetch-Site": "same-origin"}, 204},
+		{"matching origin", pub, map[string]string{"Origin": pub}, 204},
+		{"cross-site fetch", pub, map[string]string{"Sec-Fetch-Site": "cross-site", "Origin": pub}, 403},
+		{"mismatched origin", pub, map[string]string{"Origin": "http://evil.test"}, 403},
+		{"origin with no PublicOrigin", "", map[string]string{"Origin": pub}, 403},
+		{"missing both", pub, nil, 403},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, func(cfg *Config) { cfg.PublicOrigin = c.public })
+			sc := findCookie(h.login(nil), SessionCookie)
+			req := httptest.NewRequest("POST", "/auth/logout", nil)
+			for k, v := range c.headers {
+				req.Header.Set(k, v)
+			}
+			req.AddCookie(&http.Cookie{Name: SessionCookie, Value: sc.Value})
+			rec := h.do(req)
+			if rec.Code != c.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, c.wantStatus)
+			}
+			if c.wantStatus == 204 {
+				if len(h.store.Sessions()) != 0 {
+					t.Fatal("session not deleted")
+				}
+				return
+			}
+			var body map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body["code"] != "forbidden" {
+				t.Fatalf("body = %s", rec.Body)
+			}
+			if findCookie(rec, SessionCookie) != nil || len(h.store.Sessions()) != 1 {
+				t.Fatal("cross-site logout touched the session")
+			}
+			if me := h.api(sc.Value); me.Code != 200 {
+				t.Fatalf("session should survive rejected logout, /api/me = %d", me.Code)
+			}
+		})
+	}
+}
+
+func TestSecureCookieNameOnly(t *testing.T) {
+	cases := []struct {
+		name       string
+		secure     bool
+		sendAs     string
+		wantStatus int
+	}{
+		{"https accepts __Host- name", true, SecureSessionCookie, 200},
+		{"https ignores plain name", true, SessionCookie, 401},
+		{"http accepts plain name", false, SessionCookie, 200},
+		{"http ignores __Host- name", false, SecureSessionCookie, 401},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, func(cfg *Config) { cfg.Secure = c.secure })
+			sc := findCookie(h.login(nil), h.auth.SessionCookieName())
+			if sc == nil {
+				t.Fatal("login failed")
+			}
+			req := httptest.NewRequest("GET", "/api/me", nil)
+			req.AddCookie(&http.Cookie{Name: c.sendAs, Value: sc.Value})
+			if rec := h.do(req); rec.Code != c.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, c.wantStatus)
+			}
+			// Logout clears the cookie under the configured name.
+			lo := httptest.NewRequest("POST", "/auth/logout", nil)
+			lo.Header.Set("Sec-Fetch-Site", "same-origin")
+			lo.AddCookie(&http.Cookie{Name: h.auth.SessionCookieName(), Value: sc.Value})
+			rec := h.do(lo)
+			cl := findCookie(rec, h.auth.SessionCookieName())
+			if rec.Code != 204 || cl == nil || cl.MaxAge >= 0 || cl.Secure != c.secure || cl.Path != "/" {
+				t.Fatalf("logout = %d, clear cookie %+v", rec.Code, cl)
+			}
+		})
 	}
 }

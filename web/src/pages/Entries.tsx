@@ -59,7 +59,7 @@ export default function Entries() {
   return (
     <>
       <PageTitle>Entries</PageTitle>
-      <QuickAddBar api={api} categories={categories} onSaved={() => { void load(); void refresh() }} />
+      <QuickAddBar api={api} categories={categories} onSaved={() => { void load(); void refresh() }} onUncertain={() => { void load() }} />
       <div className="mb-4 flex flex-wrap gap-3">
         <div className="flex-[1_1_260px]">
           <label htmlFor="f-q" className="sr-only-text">Search payee or note</label>

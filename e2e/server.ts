@@ -62,7 +62,7 @@ export async function startServer(opts: {
   const bin = path.join(REPO, 'bin', opts.bin)
   if (!fs.existsSync(bin)) throw new Error(`${bin} missing: run make build / make build-e2e first`)
   let out = ''
-  const proc = spawn(bin, ['serve'], { cwd: workDir, env, stdio: ['ignore', 'pipe', 'pipe'] })
+  const proc = spawn(bin, ['serve'], { cwd: workDir, env: { ...env, KIRA_E2E: '1' }, stdio: ['ignore', 'pipe', 'pipe'] })
   proc.stdout?.on('data', (d) => (out += d))
   proc.stderr?.on('data', (d) => (out += d))
   const url = `http://localhost:${opts.port}`

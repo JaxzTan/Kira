@@ -17,6 +17,14 @@ type ReceiptChecker interface {
 	Exists(sha256 string) bool
 }
 
+// ReceiptVerifier re-hashes a stored receipt (*receipts.Store satisfies it).
+// VerifyFile returns nil, receipts.ErrTampered (content swapped) or another
+// error (missing/unreadable). If Config.Receipts also implements it, Verify
+// re-hashes every distinct referenced receipt (TR-8).
+type ReceiptVerifier interface {
+	VerifyFile(sha256 string) error
+}
+
 // Config configures a Service.
 type Config struct {
 	Store    *store.Store
@@ -32,14 +40,17 @@ type Service struct {
 	db       *sql.DB
 	key      []byte
 	receipts ReceiptChecker
+	rverify  ReceiptVerifier
 	now      func() time.Time
 	loc      *time.Location
 
-	mu sync.Mutex // serialises Append (single writer, TR-4)
+	mu         sync.Mutex // serialises Append (single writer, TR-4); see WithWriteLock
+	appendHook func(Row)  // guarded by mu
 
 	stateMu sync.Mutex
 	last    *VerifyResult
-	ackKey  string
+	acked   map[string]struct{} // Problem.Key set covered by acknowledgements
+	ackedAt string
 }
 
 // New builds a Service. It does not verify; call Verify at startup (TR-7).
@@ -57,6 +68,9 @@ func New(cfg Config) (*Service, error) {
 		receipts: cfg.Receipts,
 		now:      cfg.Now,
 		loc:      cfg.Location,
+	}
+	if rv, ok := cfg.Receipts.(ReceiptVerifier); ok {
+		s.rverify = rv
 	}
 	if s.now == nil {
 		s.now = time.Now
@@ -93,20 +107,18 @@ func (s *Service) Append(ctx context.Context, req Request) (AppendResult, error)
 		return AppendResult{}, ErrLedgerBroken
 	}
 	var in Input
+	var ve *ValidationError
+	var needConfirm bool
 	var reason string
-	var err error
 	switch req.Kind {
 	case KindCreate, KindAmend:
-		in, err = ValidateInput(req.Input, s.today())
-		if err != nil {
-			return AppendResult{}, err
-		}
-		if in.ReceiptSHA256 != nil && s.receipts != nil && !s.receipts.Exists(*in.ReceiptSHA256) {
-			return AppendResult{}, &ValidationError{Fields: map[string]string{"receipt_sha256": "unknown receipt; upload it first"}}
+		in, ve, needConfirm = validateInput(req.Input, s.today())
+		if in.ReceiptSHA256 != nil && ve.Fields["receipt_sha256"] == "" && s.receipts != nil && !s.receipts.Exists(*in.ReceiptSHA256) {
+			ve.add("receipt_sha256", "unknown receipt; upload it first")
 		}
 	case KindVoid:
-		reason, err = ValidateReason(req.Reason)
-		if err != nil {
+		var err error
+		if reason, err = ValidateReason(req.Reason); err != nil {
 			return AppendResult{}, err
 		}
 	default:
@@ -129,47 +141,65 @@ func (s *Service) Append(ctx context.Context, req Request) (AppendResult, error)
 	defer tx.Rollback()
 
 	row := Row{Kind: req.Kind, Currency: CurrencyMYR, Direction: DirectionExpense}
+	// Load the target (amend/void) first: an amend may keep its (now
+	// archived) category, so the category check depends on it.
 	var target *Entry
+	var targetErr error
 	if req.Kind != KindCreate {
 		var kind string
 		err := tx.QueryRowContext(ctx, `SELECT kind FROM entries WHERE id = ?`, req.RefID).Scan(&kind)
-		if errors.Is(err, sql.ErrNoRows) {
-			return AppendResult{}, ErrNotFound
-		}
-		if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			targetErr = ErrNotFound
+		case err != nil:
 			return AppendResult{}, fmt.Errorf("ledger: load target: %w", err)
+		case kind != KindCreate:
+			targetErr = ErrNotCreate
+		default:
+			e, err := getEntry(ctx, tx, req.RefID)
+			if err != nil {
+				return AppendResult{}, err
+			}
+			if e.Status == StatusVoided {
+				targetErr = ErrVoided
+			}
+			target = &e
+			ref := req.RefID
+			row.RefID = &ref
 		}
-		if kind != KindCreate {
-			return AppendResult{}, ErrNotCreate
+	}
+
+	if req.Kind != KindVoid {
+		// Category existence is checked even when other fields fail, so one
+		// 422 lists every bad field.
+		if in.CategoryID > 0 {
+			var archived sql.NullString
+			err := tx.QueryRowContext(ctx, `SELECT archived_at FROM categories WHERE id = ?`, in.CategoryID).Scan(&archived)
+			switch {
+			case errors.Is(err, sql.ErrNoRows):
+				ve.add("category_id", "unknown category")
+			case err != nil:
+				return AppendResult{}, fmt.Errorf("ledger: load category: %w", err)
+			case archived.Valid && (target == nil || target.CategoryID != in.CategoryID):
+				// An amend may keep an entry's (now archived) category; new choices must be active.
+				ve.add("category_id", "category is archived")
+			}
 		}
-		e, err := getEntry(ctx, tx, req.RefID)
-		if err != nil {
+		if err := ve.orNil(); err != nil {
 			return AppendResult{}, err
 		}
-		if e.Status == StatusVoided {
-			return AppendResult{}, ErrVoided
-		}
-		target = &e
-		ref := req.RefID
-		row.RefID = &ref
+	}
+	if targetErr != nil {
+		return AppendResult{}, targetErr
+	}
+	if needConfirm {
+		return AppendResult{}, ErrDateConfirmRequired
 	}
 
 	if req.Kind == KindVoid {
 		row.Direction = target.Direction
 		row.VoidReason = &reason
 	} else {
-		var archived sql.NullString
-		err := tx.QueryRowContext(ctx, `SELECT archived_at FROM categories WHERE id = ?`, in.CategoryID).Scan(&archived)
-		if errors.Is(err, sql.ErrNoRows) {
-			return AppendResult{}, &ValidationError{Fields: map[string]string{"category_id": "unknown category"}}
-		}
-		if err != nil {
-			return AppendResult{}, fmt.Errorf("ledger: load category: %w", err)
-		}
-		// An amend may keep an entry's (now archived) category; new choices must be active.
-		if archived.Valid && (target == nil || target.CategoryID != in.CategoryID) {
-			return AppendResult{}, &ValidationError{Fields: map[string]string{"category_id": "category is archived"}}
-		}
 		amt, cat, date, payee, method := in.AmountSen, in.CategoryID, in.OccurredOn, in.Payee, in.Method
 		row.Direction = in.Direction
 		row.OccurredOn, row.AmountSen, row.CategoryID = &date, &amt, &cat
@@ -205,7 +235,32 @@ func (s *Service) Append(ctx context.Context, req Request) (AppendResult, error)
 	if err := tx.Commit(); err != nil {
 		return AppendResult{}, fmt.Errorf("ledger: commit: %w", err)
 	}
+	if s.appendHook != nil {
+		s.appendHook(row) // still under s.mu: row is the chain tip
+	}
 	return AppendResult{Row: row, Entry: entry}, nil
+}
+
+// SetAppendHook registers fn to run after every committed append, while the
+// write mutex is still held, so fn sees rows strictly in chain order and no
+// other append or VerifyLocked can interleave (use it to advance the head
+// file). The row is already durable when fn runs; fn cannot fail the append,
+// so it should log its own errors. fn must not call back into Service write
+// methods (deadlock). nil removes the hook.
+func (s *Service) SetAppendHook(fn func(Row)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.appendHook = fn
+}
+
+// WithWriteLock runs fn while holding the ledger write mutex (no append,
+// VerifyLocked or Acknowledge can run concurrently). fn must not call
+// Append/Create/Amend/Void, VerifyLocked, Acknowledge, SetAppendHook or
+// WithWriteLock. Plain reads and VerifyWith are fine.
+func (s *Service) WithWriteLock(fn func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return fn()
 }
 
 type queryer interface {
@@ -243,33 +298,4 @@ func (s *Service) LastVerify() (VerifyResult, bool) {
 		return VerifyResult{}, false
 	}
 	return *s.last, true
-}
-
-// Acknowledge re-enables writes after a failed Verify (TR-7). The
-// acknowledgement covers that exact set of problems: a later Verify that
-// finds a different set (new tampering) blocks writes again. Returns the
-// (updated) last result; ok=false if Verify has never run.
-func (s *Service) Acknowledge() (VerifyResult, bool) {
-	s.stateMu.Lock()
-	defer s.stateMu.Unlock()
-	if s.last == nil {
-		return VerifyResult{}, false
-	}
-	if !s.last.OK {
-		s.ackKey = problemsKey(s.last.Problems)
-		s.last.Acknowledged = true
-	}
-	return *s.last, true
-}
-
-func (s *Service) record(res *VerifyResult) {
-	s.stateMu.Lock()
-	defer s.stateMu.Unlock()
-	if res.OK {
-		s.ackKey = ""
-	} else if s.ackKey != "" && s.ackKey == problemsKey(res.Problems) {
-		res.Acknowledged = true
-	}
-	cp := *res
-	s.last = &cp
 }

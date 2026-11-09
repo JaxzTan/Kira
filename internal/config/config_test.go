@@ -82,10 +82,58 @@ func TestFromLookup(t *testing.T) {
 			m["OIDC_ISSUER_URL"] = "http://127.0.0.1:9/"
 			m["PUBLIC_URL"] = "http://localhost:5173"
 		}, checkCfg: func(t *testing.T, c Config) {
-			if c.AllowedSub != "123" || c.OIDCIssuerURL == "" || c.Secure() {
+			if c.AllowedSub != "123" || c.Secure() || c.Host != "127.0.0.1" || c.TrustProxy {
 				t.Fatalf("%+v", c)
 			}
+			if e2eBuild != (c.OIDCIssuerURL != "") {
+				t.Fatalf("OIDC_ISSUER_URL honoured=%v in e2eBuild=%v", c.OIDCIssuerURL != "", e2eBuild)
+			}
+			if !e2eBuild && !hasWarning(c, "OIDC_ISSUER_URL is set but ignored") {
+				t.Fatalf("no warning: %v", c.Warnings)
+			}
+			if c.PublicOrigin() != "http://localhost:5173" {
+				t.Fatal(c.PublicOrigin())
+			}
 		}},
+		{name: "non-loopback host with http url", mode: ModeServe, mutate: func(m map[string]string) {
+			m["HOST"] = "0.0.0.0"
+			m["PUBLIC_URL"] = "http://kira.local:8080"
+		}, wantErr: []string{"HOST is not a loopback address while PUBLIC_URL is http://"}},
+		{name: "non-loopback host with https url", mode: ModeServe, mutate: func(m map[string]string) { m["HOST"] = "0.0.0.0" },
+			checkCfg: func(t *testing.T, c Config) {
+				if c.Host != "0.0.0.0" {
+					t.Fatal(c.Host)
+				}
+			}},
+		{name: "loopback hosts with http url", mode: ModeServe, mutate: func(m map[string]string) {
+			m["HOST"] = "::1"
+			m["PUBLIC_URL"] = "http://localhost:5173"
+		}, checkCfg: func(t *testing.T, c Config) {}},
+		{name: "localhost with http url", mode: ModeServe, mutate: func(m map[string]string) {
+			m["HOST"] = "localhost"
+			m["PUBLIC_URL"] = "http://localhost:5173"
+		}, checkCfg: func(t *testing.T, c Config) {}},
+		{name: "bad host", mode: ModeServe, mutate: func(m map[string]string) { m["HOST"] = "a b" }, wantErr: []string{"HOST must be"}},
+		{name: "trust proxy on", mode: ModeServe, mutate: func(m map[string]string) { m["TRUST_PROXY"] = "1" },
+			checkCfg: func(t *testing.T, c Config) {
+				if !c.TrustProxy {
+					t.Fatal("TRUST_PROXY")
+				}
+			}},
+		{name: "trust proxy bad", mode: ModeServe, mutate: func(m map[string]string) { m["TRUST_PROXY"] = "maybe" }, wantErr: []string{"TRUST_PROXY must be 1 or 0"}},
+		{name: "icloud data dir warns", mode: ModeLedger, mutate: func(m map[string]string) {
+			m["DATA_DIR"] = "/Users/x/Library/Mobile Documents/com~apple~CloudDocs/kira/data"
+		}, checkCfg: func(t *testing.T, c Config) {
+			if !hasWarning(c, "data is in iCloud Drive; run scripts/install-macos.sh") {
+				t.Fatalf("warnings = %v", c.Warnings)
+			}
+		}},
+		{name: "normal data dir no warning", mode: ModeLedger, mutate: func(m map[string]string) { m["DATA_DIR"] = "/srv/kira/data" },
+			checkCfg: func(t *testing.T, c Config) {
+				if len(c.Warnings) != 0 {
+					t.Fatalf("warnings = %v", c.Warnings)
+				}
+			}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -120,6 +168,43 @@ func TestFromLookup(t *testing.T) {
 	}
 }
 
+func hasWarning(c Config, sub string) bool {
+	for _, w := range c.Warnings {
+		if strings.Contains(w, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPublicOrigin(t *testing.T) {
+	tests := map[string]string{
+		"https://Kira.Example.ts.net/":   "https://kira.example.ts.net",
+		"http://localhost:5173":          "http://localhost:5173",
+		"https://kira.example.ts.net/x/": "https://kira.example.ts.net",
+		"":                               "",
+	}
+	for in, want := range tests {
+		if got := (Config{PublicURL: strings.TrimRight(in, "/")}).PublicOrigin(); got != want {
+			t.Errorf("PublicOrigin(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestInICloud(t *testing.T) {
+	tests := map[string]bool{
+		"/Users/a/Library/Mobile Documents/com~apple~CloudDocs/kira/.env": true,
+		"/Users/a/Library/Mobile Documents":                               true,
+		"/Users/a/kira/data":                                              false,
+		"/Users/a/Library/Application Support/kira":                       false,
+	}
+	for p, want := range tests {
+		if got := InICloud(p); got != want {
+			t.Errorf("InICloud(%q) = %v", p, got)
+		}
+	}
+}
+
 func TestLogValueHasNoSecrets(t *testing.T) {
 	c, err := FromLookup(ModeServe, lookupFrom(fullEnv()))
 	if err != nil {
@@ -130,42 +215,6 @@ func TestLogValueHasNoSecrets(t *testing.T) {
 		if strings.Contains(s, bad) {
 			t.Fatalf("LogValue leaks %q: %s", bad, s)
 		}
-	}
-}
-
-func TestLoadDotEnvDoesNotOverrideEnv(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	env := "DATA_DIR=./fromfile\nLEDGER_KEY=" + goodLedger + "\n"
-	if err := os.WriteFile(".env", []byte(env), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("DATA_DIR", filepath.Join(dir, "fromenv"))
-	t.Setenv("LEDGER_KEY", "") // registers cleanup; then unset so .env supplies it
-	os.Unsetenv("LEDGER_KEY")
-	c, err := Load(ModeLedger)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if filepath.Base(c.DataDir) != "fromenv" {
-		t.Fatalf("env should win over .env, got %s", c.DataDir)
-	}
-	if len(c.LedgerKey) != 32 {
-		t.Fatal(".env value not loaded")
-	}
-}
-
-func TestLoadBadDotEnvDoesNotQuote(t *testing.T) {
-	t.Chdir(t.TempDir())
-	if err := os.WriteFile(".env", []byte("LEDGER_KEY='"+secretVal+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	_, err := Load(ModeLedger)
-	if err == nil {
-		t.Skip("godotenv accepted the line; nothing to check")
-	}
-	if strings.Contains(err.Error(), secretVal) {
-		t.Fatalf("error quotes .env content: %v", err)
 	}
 }
 

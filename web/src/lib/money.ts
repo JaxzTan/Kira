@@ -26,7 +26,13 @@ export function formatRMWhole(sen: number): string {
  * junk, negatives, more than 2 decimals, or empty input. Never uses floats.
  */
 export function parseRMToSen(input: string): number | null {
-  const s = input.trim().replace(/^RM\s*/i, '').replace(/,/g, '')
+  let s = input.trim().replace(/^RM\s*/i, '')
+  // Commas are accepted only as valid thousands separators in the whole part: 1,234.56 / 12,345.
+  const whole0 = s.split('.')[0] ?? ''
+  if (whole0.includes(',')) {
+    if (!/^\d{1,3}(,\d{3})+$/.test(whole0)) return null
+    s = whole0.replace(/,/g, '') + s.slice(whole0.length)
+  }
   if (!/^\d+(\.\d{1,2})?$/.test(s) && !/^\d*\.\d{1,2}$/.test(s)) return null
   const [w = '', f = ''] = s.split('.')
   const sen = Number(w || '0') * 100 + Number(f.padEnd(2, '0') || '0')

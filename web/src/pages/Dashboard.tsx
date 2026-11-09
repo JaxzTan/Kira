@@ -14,7 +14,7 @@ import { formatRM } from '../lib/money'
 
 function pctText(p: number | null): string {
   if (p === null) return '—'
-  const s = Number.isInteger(p) ? String(p) : p.toFixed(1)
+  const s = Math.abs(p) >= 10 ? String(Math.round(p)) : p.toFixed(1)
   return `${p > 0 ? '+' : ''}${s}%`
 }
 

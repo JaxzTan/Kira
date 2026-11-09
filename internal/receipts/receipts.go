@@ -8,7 +8,10 @@
 // orientation is applied to the pixels first so photos stay upright. PDFs
 // are stored byte-for-byte. The sha256 is of the stored bytes, so the
 // ledger's receipt_sha256 also proves the file was not swapped
-// (see Store.VerifyFile).
+// (see Store.VerifyFile, Store.OpenVerified and ledger.Service.Verify).
+//
+// Memory: images over MaxPixels (25 MP) are rejected from the header alone,
+// and only one image is decoded at a time (process-wide semaphore).
 package receipts
 
 import (
@@ -30,7 +33,7 @@ import (
 // Limits.
 const (
 	MaxBytes  = 10 << 20   // upload limit (TR-8)
-	MaxPixels = 60_000_000 // decompression-bomb guard
+	MaxPixels = 25_000_000 // decompression-bomb guard (25 MP), checked from the header before decoding
 	// JPEGQuality is used when re-encoding JPEGs.
 	JPEGQuality = 90
 )
@@ -42,8 +45,18 @@ var (
 	ErrInvalidImage = errors.New("receipt image could not be decoded")  // 415
 	ErrInvalidSHA   = errors.New("receipt id must be 64 lowercase hex") // 400
 	ErrNotFound     = errors.New("receipt not found")                   // 404
-	ErrCorrupt      = errors.New("receipt file content does not match its hash")
+	// ErrTampered: the stored file no longer hashes to its name (409 conflict).
+	ErrTampered = errors.New("receipt file content does not match its hash")
+	// ErrCorrupt is the old name of ErrTampered.
+	ErrCorrupt = ErrTampered
 )
+
+// decodeSem allows one image decode/re-encode at a time, bounding peak
+// memory to roughly one MaxPixels image regardless of concurrent uploads.
+var decodeSem = make(chan struct{}, 1)
+
+// beforeDecode is a test hook called right before a full image decode.
+var beforeDecode = func() {}
 
 // Info describes a stored receipt (api.Receipt).
 type Info struct {
@@ -109,10 +122,10 @@ func (s *Store) Save(r io.Reader, declaredSize int64) (Info, error) {
 	switch ctype {
 	case "image/jpeg":
 		ext = "jpg"
-		data, err = reencodeJPEG(raw)
+		data, err = reencode(raw, jpeg.DecodeConfig, reencodeJPEG)
 	case "image/png":
 		ext = "png"
-		data, err = reencodePNG(raw)
+		data, err = reencode(raw, png.DecodeConfig, reencodePNG)
 	case "application/pdf":
 		ext, data = "pdf", raw
 	default:
@@ -144,10 +157,19 @@ func checkPixels(raw []byte, decodeConfig func(io.Reader) (image.Config, error))
 	return nil
 }
 
-func reencodeJPEG(raw []byte) ([]byte, error) {
-	if err := checkPixels(raw, jpeg.DecodeConfig); err != nil {
+// reencode checks the header dimensions (cheap, no pixel allocation), then
+// decodes and re-encodes under decodeSem.
+func reencode(raw []byte, decodeConfig func(io.Reader) (image.Config, error), fn func([]byte) ([]byte, error)) ([]byte, error) {
+	if err := checkPixels(raw, decodeConfig); err != nil {
 		return nil, err
 	}
+	decodeSem <- struct{}{}
+	defer func() { <-decodeSem }()
+	beforeDecode()
+	return fn(raw)
+}
+
+func reencodeJPEG(raw []byte) ([]byte, error) {
 	img, err := jpeg.Decode(bytes.NewReader(raw))
 	if err != nil {
 		return nil, ErrInvalidImage
@@ -161,9 +183,6 @@ func reencodeJPEG(raw []byte) ([]byte, error) {
 }
 
 func reencodePNG(raw []byte) ([]byte, error) {
-	if err := checkPixels(raw, png.DecodeConfig); err != nil {
-		return nil, err
-	}
 	img, err := png.Decode(bytes.NewReader(raw))
 	if err != nil {
 		return nil, ErrInvalidImage
@@ -247,7 +266,33 @@ func (s *Store) Open(sha string) (*os.File, Info, error) {
 	return f, info, nil
 }
 
-// VerifyFile re-hashes a stored receipt; ErrCorrupt if the content was swapped.
+// OpenVerified opens a stored receipt after re-hashing it, positioned at
+// offset 0. Errors: ErrInvalidSHA, ErrNotFound, ErrTampered (content no
+// longer matches sha; serve 409), or a wrapped I/O error. The caller closes
+// the file.
+func (s *Store) OpenVerified(sha string) (*os.File, Info, error) {
+	f, info, err := s.Open(sha)
+	if err != nil {
+		return nil, Info{}, err
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		f.Close()
+		return nil, Info{}, fmt.Errorf("receipts: read: %w", err)
+	}
+	if hex.EncodeToString(h.Sum(nil)) != sha {
+		f.Close()
+		return nil, Info{}, ErrTampered
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		f.Close()
+		return nil, Info{}, fmt.Errorf("receipts: seek: %w", err)
+	}
+	return f, info, nil
+}
+
+// VerifyFile re-hashes a stored receipt. Errors: ErrInvalidSHA,
+// ErrNotFound, ErrTampered (content swapped), or a wrapped I/O error.
 func (s *Store) VerifyFile(sha string) error {
 	_, p, err := s.Stat(sha)
 	if err != nil {
@@ -267,7 +312,7 @@ func (s *Store) checkFile(path, sha string) error {
 		return err
 	}
 	if hex.EncodeToString(h.Sum(nil)) != sha {
-		return ErrCorrupt
+		return ErrTampered
 	}
 	return nil
 }

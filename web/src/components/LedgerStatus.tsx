@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { isApiError } from '../api/errors'
 import { relativeTime, shortHash } from '../lib/dates'
 import { IconShield, IconShieldX } from './icons'
 import { useLedger } from './ledger-context'
@@ -25,18 +27,27 @@ export function LedgerStatus() {
 
 export function LedgerBanner() {
   const { verify, acknowledge } = useLedger()
+  const [busy, setBusy] = useState(false)
+  const [ackError, setAckError] = useState<string | null>(null)
+  async function onAck() {
+    if (busy) return
+    setBusy(true); setAckError(null)
+    try { await acknowledge() } catch (e) { setAckError(isApiError(e) ? e.message : 'Could not acknowledge. Try again.') } finally { setBusy(false) }
+  }
   if (!verify || verify.ok || verify.acknowledged) return null
   return (
     <div role="alert" className="flex w-full flex-wrap items-center justify-between gap-3 bg-danger px-6 py-3 text-white">
       <p className="text-sm font-semibold">
         Ledger verification failed at entry #{verify.broken_at}{verify.reason ? ` (${verify.reason})` : ''}. Writes are disabled until you acknowledge.
       </p>
+      {ackError && <p className="w-full text-sm font-semibold">{ackError}</p>}
       <button
         type="button"
-        onClick={() => void acknowledge()}
-        className="h-control cursor-pointer rounded-control border border-white bg-transparent px-5 text-sm font-semibold text-white hover:bg-white/15"
+        disabled={busy}
+        onClick={() => void onAck()}
+        className="h-control cursor-pointer rounded-control border border-white bg-transparent px-5 text-sm font-semibold text-white hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        Acknowledge
+        {busy ? 'Acknowledging…' : 'Acknowledge'}
       </button>
     </div>
   )

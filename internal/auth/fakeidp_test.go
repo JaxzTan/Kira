@@ -284,7 +284,7 @@ func (h *harness) login(mut func(claims map[string]any)) *httptest.ResponseRecor
 func (h *harness) api(token string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest("GET", "/api/me", nil)
 	if token != "" {
-		req.AddCookie(&http.Cookie{Name: SessionCookie, Value: token})
+		req.AddCookie(&http.Cookie{Name: h.auth.SessionCookieName(), Value: token})
 	}
 	return h.do(req)
 }

@@ -96,20 +96,42 @@ func checkText(s string, max int) string {
 }
 
 // ValidateInput normalizes and checks a create/amend body without touching
-// the database (category existence and receipt existence are checked by
-// Service). today is the server-local current date.
+// the database (category and receipt existence are checked by Service,
+// which merges those errors into the same *ValidationError so every failing
+// field is reported at once). today is the server-local current date.
+//
+// Normalisation: direction "" = expense; payee and note are trimmed; a
+// whitespace-only note becomes nil. receipt_sha256 must be nil or 64
+// lowercase hex ("" is an error). direction "income" is rejected until FR-9.
 //
 // Returns *ValidationError for field errors; if fields are fine but the date
 // is more than DateConfirmDays from today and !in.ConfirmDate, returns
 // ErrDateConfirmRequired.
 func ValidateInput(in Input, today time.Time) (Input, error) {
+	out, ve, needConfirm := validateInput(in, today)
+	if err := ve.orNil(); err != nil {
+		return in, err
+	}
+	if needConfirm {
+		return in, ErrDateConfirmRequired
+	}
+	return out, nil
+}
+
+// validateInput returns the normalised input, the field errors (possibly
+// empty) and whether the date needs confirmation.
+func validateInput(in Input, today time.Time) (Input, *ValidationError, bool) {
 	ve := &ValidationError{}
 	out := in
 	if out.Direction == "" {
 		out.Direction = DirectionExpense
 	}
-	if out.Direction != DirectionExpense && out.Direction != DirectionIncome {
-		ve.add("direction", "must be expense or income")
+	switch out.Direction {
+	case DirectionExpense:
+	case DirectionIncome:
+		ve.add("direction", "income is not supported yet; must be expense")
+	default:
+		ve.add("direction", "must be expense")
 	}
 	if err := ValidateAmount(out.AmountSen); err != nil {
 		ve.add("amount_sen", err.Error())
@@ -141,26 +163,20 @@ func ValidateInput(in Input, today time.Time) (Input, error) {
 		}
 	}
 	if out.ReceiptSHA256 != nil {
-		if *out.ReceiptSHA256 == "" {
-			out.ReceiptSHA256 = nil
-		} else if !IsSHA256Hex(*out.ReceiptSHA256) {
-			ve.add("receipt_sha256", "must be 64 lowercase hex characters")
+		if !IsSHA256Hex(*out.ReceiptSHA256) {
+			ve.add("receipt_sha256", "must be null or 64 lowercase hex characters")
 		} else {
 			r := *out.ReceiptSHA256
 			out.ReceiptSHA256 = &r
 		}
 	}
-	if err := ve.orNil(); err != nil {
-		return in, err
-	}
-	if !out.ConfirmDate {
+	needConfirm := false
+	if dateErr == nil && !out.ConfirmDate {
 		t := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
 		days := int(d.Sub(t).Hours() / 24)
-		if days > DateConfirmDays || days < -DateConfirmDays {
-			return in, ErrDateConfirmRequired
-		}
+		needConfirm = days > DateConfirmDays || days < -DateConfirmDays
 	}
-	return out, nil
+	return out, ve, needConfirm
 }
 
 // ValidateReason trims and checks a void reason.

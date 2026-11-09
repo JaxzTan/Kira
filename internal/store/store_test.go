@@ -97,7 +97,7 @@ func TestMigrateIdempotentAndSeedOnce(t *testing.T) {
 	}
 	defer s.Close()
 	v, err := s.SchemaVersion(ctx)
-	if err != nil || v != 2 {
+	if err != nil || v != 3 {
 		t.Fatalf("schema version = %d, %v", v, err)
 	}
 	cats, err := s.ListCategories(ctx, true)

@@ -10,12 +10,21 @@
 //
 // Zip: expenses.csv plus receipts/<sha256>.<ext> for every distinct
 // receipt referenced by the rows (voided rows included). Referenced receipts
-// whose file is missing are listed in MISSING_RECEIPTS.txt instead.
+// whose file is missing are listed in MISSING_RECEIPTS.txt instead. Each
+// receipt is SHA-256 hashed while it is copied; files whose content no longer
+// matches their name are still included (as evidence) and listed in
+// TAMPERED_RECEIPTS.txt.
+//
+// Category labels come from the categories table, which is outside the hash
+// chain: renaming a category changes the label in exports of older entries
+// (v1.1 should snapshot category_name per row).
 package export
 
 import (
 	"archive/zip"
+	"crypto/sha256"
 	"encoding/csv"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -121,7 +130,7 @@ func WriteZip(w io.Writer, rows []ledger.Entry, rs Receipts) error {
 		return err
 	}
 	seen := map[string]bool{}
-	var missing []string
+	var missing, tampered []string
 	for _, e := range rows {
 		if e.ReceiptSHA256 == nil || seen[*e.ReceiptSHA256] {
 			continue
@@ -137,11 +146,24 @@ func WriteZip(w io.Writer, rows []ledger.Entry, rs Receipts) error {
 			missing = append(missing, sha)
 			continue
 		}
-		if err := addFile(create, "receipts/"+info.FileName(), path); err != nil {
+		ok, err := addFile(create, "receipts/"+info.FileName(), path, sha)
+		if err != nil {
 			if os.IsNotExist(err) {
 				missing = append(missing, sha)
 				continue
 			}
+			return err
+		}
+		if !ok {
+			tampered = append(tampered, info.FileName())
+		}
+	}
+	if len(tampered) > 0 {
+		f, err := create("TAMPERED_RECEIPTS.txt")
+		if err != nil {
+			return err
+		}
+		if _, err := io.WriteString(f, "Receipts whose content no longer matches their SHA-256 (modified after upload):\n"+strings.Join(tampered, "\n")+"\n"); err != nil {
 			return err
 		}
 	}
@@ -157,16 +179,21 @@ func WriteZip(w io.Writer, rows []ledger.Entry, rs Receipts) error {
 	return zw.Close()
 }
 
-func addFile(create func(string) (io.Writer, error), name, path string) error {
+// addFile copies path into the zip as name, hashing on the way; ok reports
+// whether the content's SHA-256 equals sha.
+func addFile(create func(string) (io.Writer, error), name, path, sha string) (ok bool, err error) {
 	src, err := os.Open(path)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer src.Close()
 	dst, err := create(name)
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = io.Copy(dst, src)
-	return err
+	h := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(dst, h), src); err != nil {
+		return false, err
+	}
+	return hex.EncodeToString(h.Sum(nil)) == sha, nil
 }

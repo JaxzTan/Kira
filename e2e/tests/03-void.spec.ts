@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures'
 import { categories, rmToSen, row, seed, uniq } from './helpers'
 
 test('void: reason required, row struck through, excluded from totals', async ({ page, request }) => {

@@ -74,7 +74,7 @@ func TestEntryLifecycle(t *testing.T) {
 		cr.Entry.CategoryName != "Cloud & hosting" || cr.PrevHash != ledger.GenesisHash || len(cr.Hash) != 64 {
 		t.Fatalf("create = %+v", cr)
 	}
-	if hd, _ := h.head.Read(); hd == nil || hd.ID != 1 || hd.Hash != cr.Hash {
+	if hd := h.head(); hd.ID != 1 || hd.Hash != cr.Hash {
 		t.Fatalf("head file not advanced: %+v", hd)
 	}
 	second := validInput()
@@ -137,7 +137,7 @@ func TestEntryLifecycle(t *testing.T) {
 	}
 
 	// head file tracks every append
-	if hd, _ := h.head.Read(); hd == nil || hd.ID != vr.ID || hd.Hash != vr.Hash {
+	if hd := h.head(); hd.ID != vr.ID || hd.Hash != vr.Hash {
 		t.Fatalf("head = %+v, want %d", hd, vr.ID)
 	}
 	// session token never logged
@@ -239,6 +239,7 @@ func multipartReq(t *testing.T, h *harness, field string, data []byte) *http.Req
 	_ = mw.Close()
 	r := httptest.NewRequest("POST", "/api/receipts", &body)
 	r.Header.Set("Content-Type", mw.FormDataContentType())
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
 	r.RemoteAddr = h.remote
 	return h.authed(r)
 }
@@ -442,7 +443,7 @@ func TestVerifyAndBackupTime(t *testing.T) {
 		t.Fatal("last_backup_at should be null")
 	}
 	// head file is 0600
-	fi, err := os.Stat(h.head.Path())
+	fi, err := os.Stat(h.integ.HeadPath())
 	if err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("head file mode %v err %v", fi.Mode().Perm(), err)
 	}
@@ -452,17 +453,16 @@ func TestVerifyAndBackupTime(t *testing.T) {
 // makes every write 423 until acknowledged.
 func TestBrokenLedgerReadOnlyUntilAcknowledged(t *testing.T) {
 	h := newHarness(t)
-	cr := h.create(validInput())
+	h.create(validInput())
 	// Pretend rows 2..5 existed and were deleted: recorded head is ahead of the chain.
-	if err := h.head.Write(ledger.Head{ID: 5, Hash: strings.Repeat("d", 64)}); err != nil {
-		t.Fatal(err)
-	}
+	recorded := ledger.Head{ID: 5, Hash: strings.Repeat("d", 64)}
+	h.writeHead(recorded)
 	v := decode[VerifyResult](t, h.do("GET", "/api/ledger/verify", nil))
 	if v.OK || v.BrokenAt == nil || *v.BrokenAt != 2 || v.Reason == nil || *v.Reason != ledger.ReasonHeadMismatch || v.Acknowledged {
 		t.Fatalf("verify = %+v", v)
 	}
 	// failed verify must not overwrite the recorded head (evidence survives restarts)
-	if hd, _ := h.head.Read(); hd.ID != 5 {
+	if hd := h.head(); hd != recorded {
 		t.Fatalf("head overwritten by failed verify: %+v", hd)
 	}
 
@@ -482,6 +482,9 @@ func TestBrokenLedgerReadOnlyUntilAcknowledged(t *testing.T) {
 	wantError(t, h.serve(multipartReq(t, h, "file", pngBytes(t))), 423, CodeLedgerBroken)
 	// reads still work
 	wantStatus(t, h.do("GET", "/api/entries", nil), 200)
+	if _, err := os.Stat(h.integ.AckPath()); !os.IsNotExist(err) {
+		t.Fatalf("ack file exists before acknowledging: %v", err)
+	}
 
 	// acknowledge (bodyless POST: no Content-Type needed)
 	rec := h.do("POST", "/api/ledger/acknowledge", nil)
@@ -490,13 +493,38 @@ func TestBrokenLedgerReadOnlyUntilAcknowledged(t *testing.T) {
 	if ack.OK || !ack.Acknowledged {
 		t.Fatalf("ack = %+v", ack)
 	}
-	if hd, _ := h.head.Read(); hd.ID != cr.ID || hd.Hash != cr.Hash {
-		t.Fatalf("ack should record the current head, got %+v", hd)
+	// the head only moves forward: the (larger) recorded head is kept
+	if hd := h.head(); hd != recorded {
+		t.Fatalf("ack moved the head backwards: %+v", hd)
+	}
+	assertAckFile(t, h)
+	h.create(validInput())
+	// the acknowledged tail deletion stays acknowledged; writes keep working
+	v = decode[VerifyResult](t, h.do("GET", "/api/ledger/verify", nil))
+	if v.OK || !v.Acknowledged {
+		t.Fatalf("verify after ack = %+v", v)
 	}
 	h.create(validInput())
-	// acknowledged tail deletion is not reported again
-	if v := decode[VerifyResult](t, h.do("GET", "/api/ledger/verify", nil)); !v.OK {
-		t.Fatalf("verify after ack = %+v", v)
+
+	// an integrity_events row was written
+	evs, err := h.svc.IntegrityEvents(t.Context(), 10)
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("integrity events = %+v %v", evs, err)
+	}
+	// a new, different problem blocks writes again
+	h.tamperRow(2)
+	v = decode[VerifyResult](t, h.do("GET", "/api/ledger/verify", nil))
+	if v.OK || v.Acknowledged {
+		t.Fatalf("new problem should not be acknowledged: %+v", v)
+	}
+	wantError(t, h.do("POST", "/api/entries", validInput()), 423, CodeLedgerBroken)
+}
+
+func assertAckFile(t *testing.T, h *harness) {
+	t.Helper()
+	fi, err := os.Stat(h.integ.AckPath())
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("ack file: %v %v", fi, err)
 	}
 }
 
@@ -507,34 +535,6 @@ func TestAcknowledgeWhenOK(t *testing.T) {
 	v := decode[VerifyResult](t, rec)
 	if !v.OK || v.HeadID != 0 || v.HeadHash != ledger.GenesisHash || v.Acknowledged {
 		t.Fatalf("ack on ok ledger = %+v", v)
-	}
-}
-
-func TestVerifyRecordedStartup(t *testing.T) {
-	h := newHarness(t)
-	h.create(validInput())
-	if err := os.Remove(h.head.Path()); err != nil {
-		t.Fatal(err)
-	}
-	res, err := VerifyRecorded(t.Context(), h.svc, h.head, h.srv.log)
-	if err != nil || !res.OK {
-		t.Fatalf("first-run verify: %+v %v", res, err)
-	}
-	if !strings.Contains(h.logs.String(), "no recorded ledger head") || !strings.Contains(h.logs.String(), `"head":"1:`) {
-		t.Fatalf("expected head log and first-run warning, logs: %s", h.logs.String())
-	}
-	if hd, _ := h.head.Read(); hd == nil || hd.ID != 1 {
-		t.Fatal("head not recorded after ok verify")
-	}
-	// corrupt head file: verify still runs, warns, then rewrites it
-	if err := os.WriteFile(h.head.Path(), []byte("garbage"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if res, err := VerifyRecorded(t.Context(), h.svc, h.head, h.srv.log); err != nil || !res.OK {
-		t.Fatalf("verify with corrupt head: %+v %v", res, err)
-	}
-	if hd, err := h.head.Read(); err != nil || hd.ID != 1 {
-		t.Fatalf("head not repaired: %+v %v", hd, err)
 	}
 }
 
@@ -570,6 +570,9 @@ func TestSecurityHeadersAndStatic(t *testing.T) {
 			}
 			rec := h.serve(r)
 			wantStatus(t, rec, tt.status)
+			if rec.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" {
+				t.Fatal("CORP header missing")
+			}
 			if tt.bodyHas != "" && !strings.Contains(rec.Body.String(), tt.bodyHas) {
 				t.Fatalf("body %q missing %q", rec.Body.String(), tt.bodyHas)
 			}
@@ -647,7 +650,7 @@ func TestClientIP(t *testing.T) {
 		if tt.xff != "" {
 			r.Header.Set("X-Forwarded-For", tt.xff)
 		}
-		if got := clientIP(r); got != tt.want {
+		if got := clientIP(r, true); got != tt.want {
 			t.Errorf("clientIP(%s, %q) = %s, want %s", tt.remote, tt.xff, got, tt.want)
 		}
 	}

@@ -235,5 +235,16 @@ Owner acknowledges a broken ledger; writes are re-enabled. The acknowledgement c
 - Server listens on `127.0.0.1:PORT` by default; optional `HOST` overrides.
 - `last_backup_at` = newest file mtime under the local Litestream replica (`./backup/kira.db` or `DATA_DIR/../backup/kira.db`), else null.
 
+## Phase 4 hardening (accepted by main)
+- **CSRF:** every non-GET request under `/api/*` and `POST /auth/logout` must carry `Sec-Fetch-Site: same-origin`, or (if that header is absent) an `Origin` equal to `PUBLIC_URL`'s origin; otherwise 403 `forbidden` ("cross-site request"). Responses add `Cross-Origin-Resource-Policy: same-origin`.
+- **direction:** only `expense` is accepted in v1; `income` → 422 `fields.direction` (FR-9 deferred).
+- **receipt_sha256:** `""` → 422 (only `null` or 64 lowercase hex). `note` is trimmed; whitespace-only → `null`.
+- **Validation** reports every failing field in one response (including unknown `category_id`).
+- **Unknown JSON fields** → 400 `bad_request`. Duplicate keys: last wins.
+- **GET /api/entries** with `from` > `to` → 400 (same as export).
+- **Verify also checks receipts:** every distinct referenced `receipt_sha256` is re-hashed; problems use `reason` `"receipt mismatch"` / `"receipt missing"` with `broken_at` = the first ledger row referencing it. `GET /api/receipts/:sha` returns 409 `conflict` if the file no longer matches its hash; zip export lists such files in `TAMPERED_RECEIPTS.txt`.
+- **Head file:** `DATA_DIR/head` is `id:hash:mac` where mac = HMAC-SHA256(HKDF(LEDGER_KEY,"kira-head"), "head|id|hash"). It only ever moves forward. If entries exist and the head file is missing, malformed or has a bad MAC → verify fails with `reason` `"head missing"` / `"head invalid"` (needs acknowledge).
+- **Acknowledge** is persisted (`DATA_DIR/ack`, 0600) so it survives restarts, and is recorded in an append-only `integrity_events` table (`at`, `kind`=`acknowledge`, `recorded_head`, `actual_head`, `problems` JSON). An acknowledgement covers its problems; a later verify whose problems are a **subset** of acknowledged ones stays acknowledged (so appends after an acknowledged tail deletion keep working); any new problem blocks writes again.
+
 ## Frontend routes (design/README.md)
 `/login`, `/` (dashboard), `/entries`, `/entries/:id`, `/export`, `/settings`. Unknown paths serve `index.html` (SPA fallback) except `/api/*` and `/auth/*`.

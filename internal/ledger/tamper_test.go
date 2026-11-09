@@ -186,7 +186,7 @@ func TestVerifyAgainstMatchingHead(t *testing.T) {
 func TestBrokenLedgerBlocksWritesUntilAcknowledged(t *testing.T) {
 	ctx := context.Background()
 	svc, st, _ := seedChain(t)
-	if _, ok := svc.Acknowledge(); ok {
+	if _, ok, _ := svc.Acknowledge(ctx, "", nil); ok {
 		t.Fatal("acknowledge before any verify reported ok")
 	}
 	if res, _ := svc.Verify(ctx); !res.OK || svc.WritesBlocked() {
@@ -209,7 +209,10 @@ func TestBrokenLedgerBlocksWritesUntilAcknowledged(t *testing.T) {
 		{"amend blocked", func() error { _, err := svc.Amend(ctx, 1, input("2026-11-09", 1, "x")); return err }, ErrLedgerBroken},
 		{"void blocked", func() error { _, err := svc.Void(ctx, 5, "x"); return err }, ErrLedgerBroken},
 		{"acknowledge", func() error {
-			r, ok := svc.Acknowledge()
+			r, ok, err := svc.Acknowledge(ctx, "", nil)
+			if err != nil {
+				return err
+			}
 			if !ok || !r.Acknowledged || r.OK {
 				return errors.New("acknowledge result wrong")
 			}

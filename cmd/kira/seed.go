@@ -9,7 +9,6 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"github.com/JaxzTan/kira/internal/api"
 	"github.com/JaxzTan/kira/internal/config"
 	"github.com/JaxzTan/kira/internal/ledger"
 )
@@ -61,7 +60,8 @@ var samples = []sample{
 }
 
 func seed(ctx context.Context, cfg config.Config, n int, force bool, stdout, stderr io.Writer) int {
-	d, err := openLedger(ctx, cfg)
+	log := newLogger(stderr, slog.LevelWarn)
+	d, err := openLedger(ctx, cfg, log)
 	if err != nil {
 		fmt.Fprintln(stderr, "kira seed:", err)
 		return 2
@@ -76,9 +76,9 @@ func seed(ctx context.Context, cfg config.Config, n int, force bool, stdout, std
 		fmt.Fprintf(stderr, "kira seed: ledger already has %d rows; refusing (use --force to append anyway)\n", head.ID)
 		return 1
 	}
-	// Writes are only allowed on a verified ledger, same as the server.
-	log := newLogger(stderr, slog.LevelWarn)
-	if res, err := api.VerifyRecorded(ctx, d.svc, d.head, log); err != nil || !res.OK {
+	// Writes are only allowed on a verified ledger, same as the server. The
+	// append hook (api.Integrity) advances DATA_DIR/head per entry.
+	if res, err := d.integ.Verify(ctx); err != nil || !res.OK {
 		fmt.Fprintln(stderr, "kira seed: ledger does not verify; refusing to write")
 		return 1
 	}
@@ -115,10 +115,7 @@ func seed(ctx context.Context, cfg config.Config, n int, force bool, stdout, std
 			fmt.Fprintf(stderr, "kira seed: entry %d: %v\n", i+1, err)
 			return 1
 		}
-		if _, err := d.head.Advance(last.Row); err != nil {
-			fmt.Fprintln(stderr, "kira seed: record head:", err)
-		}
 	}
-	fmt.Fprintf(stdout, "seeded %d entries head=%s\n", n, api.FormatHead(ledger.Head{ID: last.Row.ID, Hash: last.Row.Hash}))
+	fmt.Fprintf(stdout, "seeded %d entries head=%s\n", n, ledger.FormatHeadID(ledger.Head{ID: last.Row.ID, Hash: last.Row.Hash}))
 	return 0
 }

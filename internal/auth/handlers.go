@@ -89,14 +89,14 @@ func (a *Auth) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	if err != nil || subtle.ConstantTimeCompare([]byte(q.Get("state")), []byte(st.State)) != 1 {
-		a.logAuth(ctx, "", "", ResultRejectState)
+		a.rejectState("bad state or oauth cookie")
 		writePage(w, http.StatusBadRequest, "Sign-in expired", "The sign-in request was invalid or expired. Please start again.")
 		return
 	}
 
 	code := q.Get("code")
 	if code == "" {
-		a.logAuth(ctx, "", "", ResultRejectToken)
+		a.rejectState("missing code")
 		writePage(w, http.StatusForbidden, "Sign-in failed", "Google did not complete the sign-in.")
 		return
 	}
@@ -112,7 +112,10 @@ func (a *Auth) handleCallback(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &re) { // log the error code only, never the body
 			err = errors.New("token endpoint error: " + re.ErrorCode)
 		}
-		a.rejectToken(w, r, "code exchange failed", err)
+		// No token came back from Google, so nothing authenticated happened:
+		// WARN only, no auth_log row (same reasoning as reject_state).
+		a.log.Warn("code exchange failed", "result", ResultRejectState, "err", err)
+		writePage(w, http.StatusForbidden, "Sign-in failed", "Google's sign-in response could not be verified. Please try again.")
 		return
 	}
 	rawID, _ := tok.Extra("id_token").(string)
@@ -195,6 +198,11 @@ func (a *Auth) checkOrPinSub(ctx context.Context, email, sub string) (string, er
 	return ResultOwnerPinned, nil
 }
 
+// rejectState logs an unauthenticated callback failure via slog only.
+func (a *Auth) rejectState(why string) {
+	a.log.Warn("login", "result", ResultRejectState, "why", why)
+}
+
 func (a *Auth) rejectToken(w http.ResponseWriter, r *http.Request, why string, err error) {
 	if err != nil {
 		a.log.Warn(why, "err", err)
@@ -214,8 +222,12 @@ func (a *Auth) reject(w http.ResponseWriter, r *http.Request, email, sub, result
 
 func (a *Auth) handleLogout(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	hash, ok := sessionHash(r)
-	a.clearCookie(w, SessionCookie, "/")
+	if !SameOrigin(r, a.cfg.PublicOrigin) {
+		writeJSONError(w, http.StatusForbidden, "forbidden", "cross-site request")
+		return
+	}
+	hash, ok := a.sessionHash(r)
+	a.clearCookie(w, a.SessionCookieName(), "/")
 	if !ok {
 		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "not signed in")
 		return
@@ -245,7 +257,7 @@ func (a *Auth) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (a *Auth) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		hash, ok := sessionHash(r)
+		hash, ok := a.sessionHash(r)
 		if !ok {
 			writeJSONError(w, http.StatusUnauthorized, "unauthorized", "not signed in")
 			return
@@ -257,7 +269,7 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		if !found {
-			a.clearCookie(w, SessionCookie, "/")
+			a.clearCookie(w, a.SessionCookieName(), "/")
 			writeJSONError(w, http.StatusUnauthorized, "unauthorized", "session expired")
 			return
 		}
@@ -265,7 +277,7 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 			if err := a.store.DeleteSession(ctx, hash); err != nil {
 				a.log.Error("delete expired session failed", "err", err)
 			}
-			a.clearCookie(w, SessionCookie, "/")
+			a.clearCookie(w, a.SessionCookieName(), "/")
 			writeJSONError(w, http.StatusUnauthorized, "unauthorized", "session expired")
 			return
 		}
@@ -287,8 +299,10 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 
 // ---- cookies & responses ----
 
-func sessionHash(r *http.Request) (string, bool) {
-	c, err := r.Cookie(SessionCookie)
+// sessionHash reads only SessionCookieName(); on https a plain
+// kira_session cookie (which a sibling subdomain could plant) is ignored.
+func (a *Auth) sessionHash(r *http.Request) (string, bool) {
+	c, err := r.Cookie(a.SessionCookieName())
 	if err != nil {
 		return "", false
 	}
@@ -301,7 +315,7 @@ func sessionHash(r *http.Request) (string, bool) {
 
 func (a *Auth) setSessionCookie(w http.ResponseWriter, token string) {
 	http.SetCookie(w, &http.Cookie{
-		Name: SessionCookie, Value: token, Path: "/",
+		Name: a.SessionCookieName(), Value: token, Path: "/", // no Domain (__Host- rule)
 		MaxAge: int(SessionTTL / time.Second), HttpOnly: true,
 		Secure: a.cfg.Secure, SameSite: http.SameSiteLaxMode,
 	})

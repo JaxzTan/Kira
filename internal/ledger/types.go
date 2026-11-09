@@ -1,6 +1,9 @@
 package ledger
 
-import "time"
+import (
+	"strconv"
+	"time"
+)
 
 // Enum values (same strings as docs/api-contract.md).
 const (
@@ -87,7 +90,7 @@ type Entry struct {
 	AmountSen     int64
 	Currency      string
 	CategoryID    int64
-	CategoryName  string
+	CategoryName  string // CURRENT name from categories (not hashed; changes on rename)
 	Payee         string
 	Method        string
 	Note          *string
@@ -135,9 +138,30 @@ type Head struct {
 }
 
 // Problem is one bad row found by Verify.
+//
+// Detail disambiguates problems that are not about a single row's content:
+// the receipt sha256 for "receipt mismatch"/"receipt missing", and the
+// recorded head "id:hash" for "head mismatch". It is part of Key (used by
+// acknowledgements) and may be shown to the owner.
 type Problem struct {
 	ID     int64
 	Reason string
+	Detail string
+}
+
+// Key identifies a problem for acknowledgement. It is stable across appends:
+// head problems are keyed by the recorded head (not by the current tip id),
+// receipt problems by sha256, everything else by (id, reason).
+func (p Problem) Key() string {
+	switch p.Reason {
+	case ReasonHeadMismatch:
+		return p.Reason + "|" + p.Detail
+	case ReasonHeadMissing, ReasonHeadInvalid:
+		return p.Reason
+	case ReasonReceiptMismatch, ReasonReceiptMissing:
+		return p.Reason + "|" + p.Detail
+	}
+	return strconv.FormatInt(p.ID, 10) + "|" + p.Reason
 }
 
 // VerifyResult mirrors api.VerifyResult (minus last_backup_at, which the API

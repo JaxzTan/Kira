@@ -8,9 +8,8 @@ After=kira.service
 [Service]
 Type=simple
 WorkingDirectory=@REPO@
-EnvironmentFile=@REPO@/.env
-# scripts/litestream-config.sh prints the config path to use (S3/R2 vs local)
-ExecStart=/bin/bash -c 'exec litestream replicate -config "$$(@REPO@/scripts/litestream-config.sh)"'
+# No EnvironmentFile: the wrapper reads only DATA_DIR and LITESTREAM_* from .env (least privilege).
+ExecStart=/bin/bash @REPO@/scripts/run-litestream.sh
 Restart=always
 RestartSec=5
 UMask=0077

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -42,16 +43,22 @@ type Options struct {
 	Store    *store.Store
 	Ledger   *ledger.Service
 	Receipts *receipts.Store
-	Head     *HeadFile
-	Static   fs.FS // web/dist contents (index.html at the root)
-	Logger   *slog.Logger
-	Now      func() time.Time
+	// Integrity persists DATA_DIR/head and DATA_DIR/ack (NewIntegrity).
+	Integrity *Integrity
+	Static    fs.FS // web/dist contents (index.html at the root)
+	Logger    *slog.Logger
+	Now       func() time.Time
 	// BackupDirs are Litestream local file replica locations; the newest
 	// file mtime inside the first existing one is last_backup_at (null if
 	// none exist, e.g. remote-only replication).
 	BackupDirs []string
 	// AuthRatePerMinute limits /auth/* per client IP (default 10).
 	AuthRatePerMinute int
+	// PublicOrigin is scheme://host[:port] of PUBLIC_URL; non-GET /api
+	// requests without Sec-Fetch-Site must send it as Origin (CSRF).
+	PublicOrigin string
+	// TrustProxy honours X-Forwarded-For from a loopback peer (TRUST_PROXY=1).
+	TrustProxy bool
 }
 
 // Server is Kira's HTTP layer.
@@ -60,21 +67,24 @@ type Server struct {
 	store    *store.Store
 	ledger   *ledger.Service
 	receipts *receipts.Store
-	head     *HeadFile
+	integ    *Integrity
 	static   fs.FS
 	log      *slog.Logger
 	now      func() time.Time
 	backups  []string
 	limiter  *rateLimiter
+	origin   string
+	proxy    bool
 }
 
 // New validates opts and returns a Server.
 func New(o Options) (*Server, error) {
-	if o.Auth == nil || o.Store == nil || o.Ledger == nil || o.Receipts == nil || o.Head == nil {
-		return nil, errors.New("api: Auth, Store, Ledger, Receipts and Head are required")
+	if o.Auth == nil || o.Store == nil || o.Ledger == nil || o.Receipts == nil || o.Integrity == nil {
+		return nil, errors.New("api: Auth, Store, Ledger, Receipts and Integrity are required")
 	}
-	s := &Server{auth: o.Auth, store: o.Store, ledger: o.Ledger, receipts: o.Receipts, head: o.Head,
-		static: o.Static, log: o.Logger, now: o.Now, backups: o.BackupDirs}
+	s := &Server{auth: o.Auth, store: o.Store, ledger: o.Ledger, receipts: o.Receipts, integ: o.Integrity,
+		static: o.Static, log: o.Logger, now: o.Now, backups: o.BackupDirs,
+		origin: strings.TrimRight(o.PublicOrigin, "/"), proxy: o.TrustProxy}
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -90,6 +100,7 @@ func New(o Options) (*Server, error) {
 		rpm = 10
 	}
 	s.limiter = newRateLimiter(rpm, s.now)
+	s.limiter.trustProxy = s.proxy
 	return s, nil
 }
 
@@ -116,7 +127,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) apiRouter() http.Handler {
 	r := chi.NewRouter()
-	r.Use(s.auth.Middleware, s.requestBody, s.readOnlyGuard)
+	r.Use(s.auth.Middleware, s.sameOrigin, s.requestBody, s.readOnlyGuard)
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, CodeNotFound, "not found", nil)
 	})
@@ -157,12 +168,29 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "same-origin")
 		h.Set("X-Frame-Options", "DENY")
+		h.Set("Cross-Origin-Resource-Policy", "same-origin")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// sameOrigin is the CSRF check for every state-changing /api request
+// (including the bodyless acknowledge and multipart receipt uploads):
+// Sec-Fetch-Site must be same-origin, or, if absent, Origin must equal
+// PUBLIC_URL's origin (auth.SameOrigin). Otherwise 403 forbidden.
+func (s *Server) sameOrigin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !auth.SameOrigin(r, s.origin) {
+			s.log.Warn("cross-site request rejected", "method", r.Method, "path", r.URL.Path,
+				"sec_fetch_site", r.Header.Get("Sec-Fetch-Site"), "ip", s.clientIP(r))
+			writeError(w, http.StatusForbidden, CodeForbidden, "cross-site request", nil)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
 
 // bodylessPOST are state-changing requests that carry no body, so they are
-// exempt from the Content-Type rule (SameSite=Lax still protects them).
+// exempt from the Content-Type rule (the sameOrigin check still applies).
 var bodylessPOST = map[string]bool{"/api/ledger/acknowledge": true}
 
 // requestBody enforces body size limits and the CSRF Content-Type rule on
@@ -251,7 +279,7 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 			lvl = slog.LevelError
 		}
 		s.log.Log(r.Context(), lvl, "http", "method", r.Method, "path", r.URL.Path, "status", sw.status,
-			"bytes", sw.bytes, "ms", time.Since(start).Milliseconds(), "ip", clientIP(r))
+			"bytes", sw.bytes, "ms", time.Since(start).Milliseconds(), "ip", s.clientIP(r))
 	})
 }
 

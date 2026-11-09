@@ -78,9 +78,13 @@ func TestValidateInput(t *testing.T) {
 		{"receipt bad", func(i *Input) { i.Receipt("ABC") }, "receipt_sha256", nil, nil},
 		{"receipt upper hex", func(i *Input) { i.Receipt(strings.Repeat("A", 64)) }, "receipt_sha256", nil, nil},
 		{"receipt good", func(i *Input) { i.Receipt(strings.Repeat("a", 64)) }, "", nil, nil},
-		{"receipt empty to nil", func(i *Input) { i.Receipt("") }, "", nil, func(t *testing.T, out Input) {
-			if out.ReceiptSHA256 != nil {
-				t.Fatal("empty receipt not nil")
+		{"receipt empty rejected", func(i *Input) { i.Receipt("") }, "receipt_sha256", nil, nil},
+		{"receipt nil ok", func(i *Input) { i.ReceiptSHA256 = nil }, "", nil, nil},
+		{"direction income rejected", func(i *Input) { i.Direction = DirectionIncome }, "direction", nil, nil},
+		{"direction expense", func(i *Input) { i.Direction = DirectionExpense }, "", nil, nil},
+		{"note trimmed", func(i *Input) { i.Note = sp("  hi \n") }, "", nil, func(t *testing.T, out Input) {
+			if out.Note == nil || *out.Note != "hi" {
+				t.Fatalf("note = %v", out.Note)
 			}
 		}},
 		{"field errors beat date confirm", func(i *Input) { i.OccurredOn = "2030-01-01"; i.AmountSen = 0 }, "amount_sen", nil, nil},

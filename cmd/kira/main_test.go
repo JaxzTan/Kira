@@ -3,13 +3,21 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JaxzTan/kira/internal/config"
+	"github.com/JaxzTan/kira/internal/ledger"
 )
 
 const testLedgerKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -80,10 +88,12 @@ func TestSeedAndVerify(t *testing.T) {
 		t.Fatalf("head file %q %v", head, err)
 	}
 
-	// Simulate deleted tail rows: recorded head is ahead of the DB.
-	if err := os.WriteFile(filepath.Join(dir, "head"), []byte("30:"+strings.Repeat("e", 64)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
+	if _, err := ledger.ParseHeadFile(testKey(t), string(head)); err != nil {
+		t.Fatalf("head file not MAC'd: %v", err)
 	}
+
+	// Simulate deleted tail rows: recorded head is ahead of the DB.
+	writeHead(t, dir, ledger.Head{ID: 30, Hash: strings.Repeat("e", 64)})
 	code, out, _ = runCmd(t, "verify")
 	if code != 1 || !strings.HasPrefix(out, "BROKEN at id=28 reason=head mismatch") {
 		t.Fatalf("verify broken = %d %q", code, out)
@@ -109,6 +119,7 @@ func TestVerifyNeedsOnlyLedgerKeys(t *testing.T) {
 		t.Fatalf("verify = %d %q %q", code, out, errOut)
 	}
 	// serve needs everything and names the missing keys without values
+	t.Setenv("KIRA_E2E", "1") // get past the e2e guard in -tags e2e runs
 	code, _, errOut := runCmd(t, "serve")
 	if code != 2 || !strings.Contains(errOut, "GOOGLE_CLIENT_ID is not set") || strings.Contains(errOut, testLedgerKey) {
 		t.Fatalf("serve config error = %d %q", code, errOut)
@@ -129,5 +140,189 @@ func TestBackupDirs(t *testing.T) {
 	got := backupDirs(cfg.DataDir)
 	if got[0] != filepath.Join("backup", "kira.db") || got[1] != "/srv/kira/backup/kira.db" {
 		t.Fatalf("%v", got)
+	}
+}
+
+func testKey(t *testing.T) []byte {
+	t.Helper()
+	k, err := hex.DecodeString(testLedgerKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k
+}
+
+func writeHead(t *testing.T, dir string, hd ledger.Head) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "head"), []byte(ledger.FormatHeadFile(testKey(t), hd)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVerifyHeadFileProblems(t *testing.T) {
+	dir := ledgerEnv(t)
+	if code, _, e := runCmd(t, "seed", "--n", "3"); code != 0 {
+		t.Fatal(e)
+	}
+	headPath := filepath.Join(dir, "head")
+	good, _ := os.ReadFile(headPath)
+	legacy := strings.Join(strings.Split(strings.TrimSpace(string(good)), ":")[:2], ":") + "\n"
+	tests := []struct {
+		name    string
+		content *string
+		want    string
+	}{
+		{"missing", nil, "BROKEN at id=3 reason=head missing"},
+		{"garbage", ptr("nope"), "BROKEN at id=3 reason=head invalid"},
+		{"legacy id:hash", &legacy, "BROKEN at id=3 reason=head invalid"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.content == nil {
+				os.Remove(headPath)
+			} else if err := os.WriteFile(headPath, []byte(*tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			code, out, _ := runCmd(t, "verify")
+			if code != 1 || !strings.HasPrefix(out, tt.want) || !strings.Contains(out, "acknowledged=false") {
+				t.Fatalf("verify = %d %q", code, out)
+			}
+			// kira verify never writes the head file
+			got, err := os.ReadFile(headPath)
+			if tt.content == nil && err == nil {
+				t.Fatal("verify recreated the head file")
+			}
+			if tt.content != nil && string(got) != *tt.content {
+				t.Fatalf("verify rewrote the head file: %q", got)
+			}
+		})
+	}
+}
+
+func ptr(s string) *string { return &s }
+
+// kira verify reads DATA_DIR/ack (reports acknowledged=true) but never changes it.
+func TestVerifyReadsAckWithoutChangingIt(t *testing.T) {
+	dir := ledgerEnv(t)
+	if code, _, e := runCmd(t, "seed", "--n", "2"); code != 0 {
+		t.Fatal(e)
+	}
+	writeHead(t, dir, ledger.Head{ID: 9, Hash: strings.Repeat("e", 64)})
+
+	cfg, err := config.Load(config.ModeLedger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := newLogger(io.Discard, slog.LevelWarn)
+	d, err := openLedger(context.Background(), cfg, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res, err := d.integ.Verify(context.Background()); err != nil || res.OK {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if res, err := d.integ.Acknowledge(context.Background()); err != nil || !res.Acknowledged {
+		t.Fatalf("ack %+v %v", res, err)
+	}
+	d.st.Close()
+
+	ackPath := filepath.Join(dir, "ack")
+	before, err := os.Stat(ackPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeBytes, _ := os.ReadFile(ackPath)
+	code, out, _ := runCmd(t, "verify")
+	if code != 1 || !strings.Contains(out, "reason=head mismatch") || !strings.Contains(out, "acknowledged=true") {
+		t.Fatalf("verify = %d %q", code, out)
+	}
+	after, err := os.Stat(ackPath)
+	afterBytes, _ := os.ReadFile(ackPath)
+	if err != nil || !os.SameFile(before, after) || !bytes.Equal(beforeBytes, afterBytes) {
+		t.Fatal("kira verify changed the ack file")
+	}
+}
+
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+// serveEnv sets a complete throwaway serve environment (never the repo .env).
+func serveEnv(t *testing.T, dataDir string) int {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	port := freePort(t)
+	env := map[string]string{
+		"PORT": strconv.Itoa(port), "PUBLIC_URL": "http://localhost:" + strconv.Itoa(port), "DATA_DIR": dataDir,
+		"GOOGLE_CLIENT_ID": "x.apps.googleusercontent.com", "GOOGLE_CLIENT_SECRET": "dummy",
+		"ALLOWED_EMAIL": "owner@example.com", "SESSION_SECRET": strings.Repeat("ab", 32), "LEDGER_KEY": testLedgerKey,
+		"KIRA_E2E": "1", "HOST": "", "TRUST_PROXY": "", "OIDC_ISSUER_URL": "",
+	}
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
+	return port
+}
+
+func TestServeStartsAndStops(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "Library", "Mobile Documents", "data") // trips the iCloud warning
+	port := serveEnv(t, dataDir)
+	ctx, cancel := context.WithCancel(context.Background())
+	var out, errb bytes.Buffer
+	done := make(chan int, 1)
+	go func() { done <- run(ctx, []string{"serve"}, &out, &errb) }()
+
+	url := "http://127.0.0.1:" + strconv.Itoa(port)
+	var resp *http.Response
+	for i := 0; i < 100; i++ {
+		var err error
+		if resp, err = http.Get(url + "/api/me"); err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if resp == nil {
+		cancel()
+		t.Fatalf("server did not start: %s", errb.String())
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 401 || resp.Header.Get("Cross-Origin-Resource-Policy") != "same-origin" {
+		t.Fatalf("GET /api/me = %d %v", resp.StatusCode, resp.Header)
+	}
+	cancel()
+	if code := <-done; code != 0 {
+		t.Fatalf("serve exit %d: %s %s", code, out.String(), errb.String())
+	}
+	logs := out.String()
+	for _, want := range []string{`"msg":"ledger head"`, `"head":"0:` + ledger.GenesisHash, "data is in iCloud Drive; run scripts/install-macos.sh"} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("log missing %q:\n%s", want, logs)
+		}
+	}
+	if strings.Contains(logs, testLedgerKey) || strings.Contains(logs, strings.Repeat("ab", 32)) {
+		t.Fatal("secret in logs")
+	}
+	// startup verify recorded the (empty) head with a MAC
+	b, err := os.ReadFile(filepath.Join(dataDir, "head"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ledger.ParseHeadFile(testKey(t), string(b)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServeRefusesNonLoopbackHTTP(t *testing.T) {
+	serveEnv(t, filepath.Join(t.TempDir(), "data"))
+	t.Setenv("HOST", "0.0.0.0")
+	code, _, errOut := runCmd(t, "serve")
+	if code != 2 || !strings.Contains(errOut, "HOST is not a loopback address") {
+		t.Fatalf("= %d %q", code, errOut)
 	}
 }

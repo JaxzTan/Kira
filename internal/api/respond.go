@@ -73,6 +73,8 @@ func classify(err error) (int, string, string, map[string]string) {
 		return http.StatusConflict, CodeConflict, ledger.ErrNotCreate.Error(), nil
 	case errors.Is(err, ledger.ErrVoided):
 		return http.StatusConflict, CodeConflict, "entry is already voided", nil
+	case errors.Is(err, receipts.ErrTampered):
+		return http.StatusConflict, CodeConflict, "receipt file does not match its hash (tampered); see Settings > ledger verify", nil
 	case errors.Is(err, store.ErrDuplicateName):
 		return http.StatusConflict, CodeConflict, store.ErrDuplicateName.Error(), nil
 	case errors.Is(err, ledger.ErrLedgerBroken):

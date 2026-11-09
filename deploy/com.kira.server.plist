@@ -6,6 +6,7 @@
   Uninstall:
     launchctl bootout gui/$(id -u)/com.kira.server && rm ~/Library/LaunchAgents/com.kira.server.plist
   launchd cannot read .env; the wrapper script handles it without printing values.
+  Install normally via scripts/install-macos.sh (renders @REPO@ as the runtime copy KIRA_HOME outside iCloud).
   Logs: @REPO@/data/server.log (data/ is mode 700)
   Note: repos under iCloud Drive may be TCC-protected; grant Full Disk Access to /bin/bash if it fails.
 -->

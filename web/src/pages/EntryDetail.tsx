@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { api, isApiError } from '../api'
+import { api, isApiError, isNetworkError } from '../api'
 import type { Category, Entry, EntryHistory, EntryInput, Method } from '../api/types'
 import { LIMITS, METHODS } from '../api/types'
 import { HistoryTimeline } from '../components/HistoryTimeline'
@@ -30,17 +30,34 @@ function Meta({ label, children }: { label: string; children: React.ReactNode })
 
 function ReceiptPreview({ sha }: { sha: string | null }) {
   const [imgOk, setImgOk] = useState(true)
-  useEffect(() => setImgOk(true), [sha])
+  const [tampered, setTampered] = useState(false)
+  useEffect(() => { setImgOk(true); setTampered(false) }, [sha])
+  // The <img> error event hides the status: probe once to tell a tampered file (409) from a PDF.
+  async function onImgError(hash: string) {
+    try {
+      const res = await fetch(api.receiptUrl(hash), { credentials: 'same-origin' })
+      if (res.status === 409) { setTampered(true); return }
+    } catch { /* fall through to the generic link */ }
+    setImgOk(false)
+  }
   const box = 'mb-5 grid min-h-[180px] place-items-center rounded-control border border-dashed border-border-strong bg-bg p-4 text-center'
   if (!sha) {
     return <div className={box}><p className="text-sm text-danger">No receipt attached</p></div>
   }
   const url = api.receiptUrl(sha)
+  if (tampered) {
+    return (
+      <div className={box}>
+        <p role="alert" className="text-sm font-semibold text-danger">Receipt file doesn't match its fingerprint</p>
+        <p className="mt-2 font-mono text-[11px] text-text-muted">sha256 {shortHash(sha)}</p>
+      </div>
+    )
+  }
   return (
     <div className={box}>
       {imgOk ? (
         <a href={url} target="_blank" rel="noreferrer" aria-label="Open receipt in a new tab">
-          <img src={url} alt="Receipt" onError={() => setImgOk(false)} className="max-h-[320px] max-w-full rounded-[6px]" />
+          <img src={url} alt="Receipt" onError={() => void onImgError(sha)} className="max-h-[320px] max-w-full rounded-[6px]" />
         </a>
       ) : (
         <div className="flex flex-col items-center gap-1 text-text-muted">
@@ -53,7 +70,11 @@ function ReceiptPreview({ sha }: { sha: string | null }) {
   )
 }
 
-function CorrectForm({ entry, categories, onDone, onCancel }: { entry: Entry; categories: Category[]; onDone: () => void; onCancel: () => void }) {
+export const UPLOAD_WAIT_MESSAGE = 'Waiting for receipt upload…'
+export const MAYBE_SAVED_MESSAGE = 'The server may have saved this — check the history before saving again.'
+const KNOWN_FIELDS = ['occurred_on', 'amount_sen', 'category_id', 'payee', 'method', 'note', 'receipt_sha256']
+
+function CorrectForm({ entry, categories, onDone, onCancel, onUncertain }: { entry: Entry; categories: Category[]; onDone: () => void; onCancel: () => void; onUncertain: () => void }) {
   const [date, setDate] = useState(entry.occurred_on)
   const [amount, setAmount] = useState(senToInput(entry.amount_sen))
   const [categoryId, setCategoryId] = useState(entry.category_id)
@@ -65,11 +86,17 @@ function CorrectForm({ entry, categories, onDone, onCancel }: { entry: Entry; ca
   const [error, setError] = useState<string | null>(null)
   const [needsConfirm, setNeedsConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const uploadSeq = useRef(0)
+  // A late upload result must not mutate a closed (unmounted) form.
+  useEffect(() => () => { uploadSeq.current++ }, [])
 
   const selectable = categories.filter((c) => !c.archived_at || c.id === entry.category_id)
 
   async function submit(e?: FormEvent, confirm = false) {
     e?.preventDefault()
+    if (busy) return
+    if (uploading) { setError(UPLOAD_WAIT_MESSAGE); return }
     const sen = parseRMToSen(amount)
     if (sen === null || sen <= 0) { setFields({ amount_sen: 'Enter an amount like 45.90' }); return }
     const input: EntryInput = {
@@ -82,13 +109,27 @@ function CorrectForm({ entry, categories, onDone, onCancel }: { entry: Entry; ca
       onDone()
     } catch (err) {
       if (isApiError(err) && err.code === 'date_confirm_required') setNeedsConfirm(true)
-      else if (isApiError(err) && err.code === 'validation' && err.fields) setFields(err.fields)
+      else if (isApiError(err) && err.code === 'validation' && err.fields) {
+        setFields(err.fields)
+        const extra = Object.entries(err.fields).filter(([k]) => !KNOWN_FIELDS.includes(k)).map(([k, v]) => `${k}: ${v}`)
+        if (extra.length) setError(extra.join('; '))
+      } else if (isNetworkError(err)) { setError(MAYBE_SAVED_MESSAGE); onUncertain() }
       else setError(isApiError(err) ? err.message : 'Could not save the correction')
     } finally { setBusy(false) }
   }
   async function upload(file?: File) {
     if (!file) return
-    try { setReceipt((await api.uploadReceipt(file)).sha256) } catch (err) { setError(isApiError(err) ? err.message : 'Receipt upload failed') }
+    const mine = ++uploadSeq.current
+    setUploading(true)
+    setError((p) => (p === UPLOAD_WAIT_MESSAGE ? null : p))
+    try {
+      const r = await api.uploadReceipt(file)
+      if (mine === uploadSeq.current) setReceipt(r.sha256)
+    } catch (err) {
+      if (mine === uploadSeq.current) setError(isApiError(err) ? err.message : 'Receipt upload failed')
+    } finally {
+      if (mine === uploadSeq.current) setUploading(false)
+    }
   }
 
   return (
@@ -132,7 +173,7 @@ function CorrectForm({ entry, categories, onDone, onCancel }: { entry: Entry; ca
       )}
       <ErrorNote message={error} />
       <div className="flex gap-3">
-        <Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save correction'}</Button>
+        <Button type="submit" disabled={busy || uploading}>{busy ? 'Saving…' : 'Save correction'}</Button>
         <Button variant="outline" onClick={onCancel}>Cancel</Button>
       </div>
     </form>
@@ -184,6 +225,13 @@ function VoidDialog({ entry, onDone, onCancel }: { entry: Entry; onDone: () => v
 
 export default function EntryDetail() {
   const id = Number(useParams().id)
+  // Keyed by id: switching entries remounts, so no edit form/state carries over.
+  return <EntryDetailView key={id} id={id} />
+}
+
+function EntryDetailView({ id }: { id: number }) {
+  const reqId = useRef(0)
+  const hasData = useRef(false)
   const [data, setData] = useState<EntryHistory | null>(null)
   const [categories, setCategories] = useState<Category[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -191,14 +239,19 @@ export default function EntryDetail() {
   const { verify, refresh } = useLedger()
 
   const load = useCallback(async () => {
+    const mine = ++reqId.current
     try {
-      setData(await api.history(id))
+      const r = await api.history(id)
+      if (mine !== reqId.current) return
+      hasData.current = true
+      setData(r)
       setError(null)
     } catch (e) {
+      if (mine !== reqId.current || hasData.current) return // a failed refresh keeps the page (and any open form)
       setError(isApiError(e) && e.code === 'not_found' ? 'Entry not found.' : isApiError(e) ? e.message : 'Could not load entry')
     }
   }, [id])
-  useEffect(() => { void load() }, [load])
+  useEffect(() => { setError(null); void load(); return () => { reqId.current++ } }, [load])
   useEffect(() => { api.listCategories(true).then((r) => setCategories(r.categories), () => {}) }, [])
 
   const done = () => { setMode('view'); void load(); void refresh() }
@@ -228,7 +281,7 @@ export default function EntryDetail() {
             <p className={`font-display text-[34px] font-bold leading-none ${voided ? 'text-text-muted line-through' : ''}`}>{formatRM(e.amount_sen)}</p>
           </div>
           {mode === 'edit' ? (
-            <CorrectForm entry={e} categories={categories} onDone={done} onCancel={() => setMode('view')} />
+            <CorrectForm entry={e} categories={categories} onDone={done} onCancel={() => setMode('view')} onUncertain={() => void load()} />
           ) : (
             <>
               <dl className="mb-5 grid grid-cols-3 gap-4 max-[520px]:grid-cols-2">

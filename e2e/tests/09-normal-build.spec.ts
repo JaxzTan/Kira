@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures'
 import fs from 'node:fs'
 import path from 'node:path'
 import { cleanup, E2E_PORT, NORMAL_PORT, REPO, startServer, stopServer } from '../server'

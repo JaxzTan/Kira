@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
-import { isApiError } from '../api/errors'
+import { isApiError, isNetworkError } from '../api/errors'
 import type { Category, Entry, EntryInput, KiraApi, Method, Receipt } from '../api/types'
 import { LIMITS, METHODS } from '../api/types'
 import { todayISO } from '../lib/dates'
@@ -19,14 +19,19 @@ interface Props {
   api: KiraApi
   categories: Category[]
   onSaved?: (entry: Entry) => void
+  /** Create failed with no HTTP response: the server may or may not have saved it. Refetch the list. */
+  onUncertain?: () => void
 }
+
+export const UPLOAD_WAIT_MESSAGE = 'Waiting for receipt upload…'
+export const MAYBE_SAVED_MESSAGE = 'The server may have saved this — check the list before saving again.'
 
 /**
  * Quick add (FR-3). Tab order: Date, Amount, Category, Payee, Paid with, Note, Receipt, Save.
  * Enter saves from any field. After save: amount/payee/note/receipt are cleared, date/category/method
  * kept, Amount refocused.
  */
-export function QuickAddBar({ api, categories, onSaved }: Props) {
+export function QuickAddBar({ api, categories, onSaved, onUncertain }: Props) {
   const [date, setDate] = useState(todayISO())
   const [amount, setAmount] = useState('')
   const [categoryId, setCategoryId] = useState<number | null>(null)
@@ -43,6 +48,8 @@ export function QuickAddBar({ api, categories, onSaved }: Props) {
   const [dragging, setDragging] = useState(false)
   const amountRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const uploadSeq = useRef(0)
+  const uploadingRef = useRef(false)
 
   const effectiveCategory = categoryId ?? categories[0]?.id ?? null
 
@@ -52,8 +59,15 @@ export function QuickAddBar({ api, categories, onSaved }: Props) {
     setNeedsConfirm(false)
   }, [date])
 
+  // A late upload result must never land on a form that was reset or unmounted.
+  useEffect(() => () => { uploadSeq.current++ }, [])
+
   async function save(confirm = confirmDate) {
     if (saving) return
+    if (uploadingRef.current) {
+      setErrors((p) => ({ ...p, form: UPLOAD_WAIT_MESSAGE }))
+      return
+    }
     const next: Errors = {}
     const sen = parseRMToSen(amount)
     if (sen === null || sen <= 0) next.amount = 'Enter an amount like 45.90'
@@ -80,6 +94,7 @@ export function QuickAddBar({ api, categories, onSaved }: Props) {
       setAmount('')
       setPayee('')
       setNote('')
+      uploadSeq.current++
       setReceipt(null)
       setNeedsConfirm(false)
       setConfirmDate(false)
@@ -94,6 +109,9 @@ export function QuickAddBar({ api, categories, onSaved }: Props) {
         const mapped: Errors = {}
         for (const [k, v] of Object.entries(e.fields)) mapped[FIELD_MAP[k] ?? 'form'] = v
         setErrors(mapped)
+      } else if (isNetworkError(e)) {
+        setErrors({ form: MAYBE_SAVED_MESSAGE })
+        onUncertain?.()
       } else {
         setErrors({ form: isApiError(e) ? e.message : 'Could not save. Try again.' })
       }
@@ -104,14 +122,17 @@ export function QuickAddBar({ api, categories, onSaved }: Props) {
 
   async function upload(file: File | undefined) {
     if (!file) return
+    const mine = ++uploadSeq.current
+    uploadingRef.current = true
     setUploading(true)
-    setErrors((p) => ({ ...p, receipt: undefined }))
+    setErrors((p) => ({ ...p, receipt: undefined, form: p.form === UPLOAD_WAIT_MESSAGE ? undefined : p.form }))
     try {
-      setReceipt(await api.uploadReceipt(file))
+      const r = await api.uploadReceipt(file)
+      if (mine === uploadSeq.current) setReceipt(r)
     } catch (e) {
-      setErrors((p) => ({ ...p, receipt: isApiError(e) ? e.message : 'Receipt upload failed' }))
+      if (mine === uploadSeq.current) setErrors((p) => ({ ...p, receipt: isApiError(e) ? e.message : 'Receipt upload failed' }))
     } finally {
-      setUploading(false)
+      if (mine === uploadSeq.current) { uploadingRef.current = false; setUploading(false) }
     }
   }
 
@@ -191,7 +212,7 @@ export function QuickAddBar({ api, categories, onSaved }: Props) {
             {uploading ? <span className="text-xs">…</span> : receipt ? <IconCheck /> : <IconPaperclip />}
           </button>
         </div>
-        <Button type="submit" disabled={saving} className="min-w-[72px]">{saving ? 'Saving…' : 'Save'}</Button>
+        <Button type="submit" disabled={saving || uploading} className="min-w-[72px]">{saving ? 'Saving…' : 'Save'}</Button>
       </div>
       {needsConfirm && (
         <div role="alert" className="mt-3 flex flex-wrap items-center gap-3 rounded-control border border-border-strong bg-bg px-3 py-2 text-sm">

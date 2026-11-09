@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures'
 
 test('sign out redirects to /login and the API returns 401', async ({ page, request, browser, baseURL }) => {
   // own session so the shared storageState stays valid for other specs

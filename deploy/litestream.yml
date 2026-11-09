@@ -1,6 +1,12 @@
-# S3/R2 replica. Used when LITESTREAM_REPLICA_URL is set (see scripts/litestream-config.sh).
-# Litestream expands ${VAR} from the environment; no secrets live in this file.
-# LITESTREAM_REPLICA_URL e.g. s3://bucket/kira.db ; LITESTREAM_ENDPOINT e.g. https://<acct>.r2.cloudflarestorage.com
+# REFERENCE ONLY. The effective config is generated at start by scripts/run-litestream.sh
+# (Litestream config cannot branch on empty env vars) into a 0600 temp file, never printed.
+# It picks, from env LITESTREAM_*:
+#   - S3/R2 replica if LITESTREAM_REPLICA_URL + ACCESS_KEY_ID + SECRET_ACCESS_KEY are set,
+#     else a local file replica at ./backup/kira.db
+#   - age encryption if LITESTREAM_AGE_RECIPIENT is set (public key; identity stays offline).
+# RESTORE NEEDS THE AGE IDENTITY when age is enabled: use a restore config with
+#   replicas: - age: { identities: ["AGE-SECRET-KEY-..."] }   (never commit it)
+# Shape of the S3/R2 + age variant:
 access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
 secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
 dbs:
@@ -9,3 +15,6 @@ dbs:
       - url: ${LITESTREAM_REPLICA_URL}
         endpoint: ${LITESTREAM_ENDPOINT}
         sync-interval: 10s
+        age:
+          recipients:
+            - ${LITESTREAM_AGE_RECIPIENT}

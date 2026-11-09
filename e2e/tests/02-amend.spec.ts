@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures'
 import { categories, seed, uniq } from './helpers'
 
 test('amend: payee shows (edited), history lists Created + Amended with ids and hashes', async ({ page, request }) => {

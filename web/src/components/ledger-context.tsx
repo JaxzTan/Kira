@@ -1,5 +1,4 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { useLocation } from 'react-router-dom'
 import { api, subscribe } from '../api'
 import type { VerifyResult } from '../api/types'
 
@@ -14,7 +13,6 @@ const Ctx = createContext<LedgerCtx>({ verify: null, failed: false, refresh: asy
 export function LedgerProvider({ children }: { children: ReactNode }) {
   const [verify, setVerify] = useState<VerifyResult | null>(null)
   const [failed, setFailed] = useState(false)
-  const { pathname } = useLocation()
 
   const refresh = useCallback(async () => {
     try {
@@ -28,9 +26,16 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
     setVerify(await api.acknowledge())
   }, [])
 
+  // Verify recomputes the whole chain server-side: run on mount, after writes (callers use refresh())
+  // and when the window regains focus, not on route changes.
   useEffect(() => {
     void refresh()
-  }, [refresh, pathname])
+  }, [refresh])
+  useEffect(() => {
+    const onFocus = () => { void refresh() }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [refresh])
 
   // Any write that returns 423 ledger_broken: re-verify so the red banner appears.
   useEffect(() => subscribe('ledgerBroken', () => { void refresh() }), [refresh])
