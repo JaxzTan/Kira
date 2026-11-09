@@ -1,32 +1,29 @@
 import { ApiError } from './errors'
+import { emit, sessionHooks } from './events'
 import type {
   AppendResult, Category, CategoryCreate, CategoryList, CategoryPatch, Entry, EntryFilter,
-  EntryHistory, EntryInput, EntryList, ExportFormat, KiraApi, Me, Receipt, Summary,
+  EntryHistory, EntryInput, ErrorResponse, EntryList, ExportFormat, KiraApi, Me, Receipt, Summary,
   VerifyResult, VoidInput,
 } from './types'
 
-function redirectToLogin() {
-  if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-    window.location.assign('/login')
-  }
-}
+export const NETWORK_MESSAGE = 'Could not reach the server. Check your connection and try again.'
+export const RATE_LIMIT_MESSAGE = 'Too many requests. Wait a moment and try again.'
+export const FORBIDDEN_MESSAGE = 'This account is not allowed.'
 
 async function request<T>(method: string, path: string, body?: unknown, form?: FormData): Promise<T> {
-  const headers: Record<string, string> = {}
+  const headers: Record<string, string> = { Accept: 'application/json' }
   let payload: BodyInit | undefined
   if (form) {
-    payload = form
+    payload = form // browser sets multipart boundary
   } else if (body !== undefined) {
     headers['Content-Type'] = 'application/json'
     payload = JSON.stringify(body)
-  } else if (method !== 'GET') {
-    headers['Content-Type'] = 'application/json'
   }
   let res: Response
   try {
     res = await fetch(path, { method, headers, body: payload, credentials: 'same-origin' })
   } catch {
-    throw new ApiError(0, { error: 'Network error: could not reach the server', code: 'internal' })
+    throw new ApiError(0, { error: NETWORK_MESSAGE, code: 'internal' })
   }
   if (res.status === 204) return undefined as T
   const text = await res.text()
@@ -39,13 +36,15 @@ async function request<T>(method: string, path: string, body?: unknown, form?: F
     }
   }
   if (!res.ok) {
-    const err = new ApiError(
-      res.status,
-      data && typeof data === 'object' && 'error' in data
-        ? (data as { error: string })
-        : { error: res.statusText || 'Request failed', code: res.status === 401 ? 'unauthorized' : 'internal' },
-    )
-    if (res.status === 401) redirectToLogin()
+    const body = data && typeof data === 'object' && 'error' in data ? (data as Partial<ErrorResponse> & { error: string }) : null
+    let err: ApiError
+    if (res.status === 401) err = new ApiError(401, { code: 'unauthorized', ...body, error: body?.error ?? 'Please sign in.' })
+    else if (res.status === 403) err = new ApiError(403, { code: 'forbidden', ...body, error: FORBIDDEN_MESSAGE })
+    else if (res.status === 429) err = new ApiError(429, { code: 'rate_limited', ...body, error: RATE_LIMIT_MESSAGE })
+    else err = new ApiError(res.status, body ?? { error: res.statusText || 'Request failed', code: 'internal' })
+    if (res.status === 401) sessionHooks.onUnauthorized()
+    else if (res.status === 403) emit('forbidden')
+    else if (res.status === 423 || err.code === 'ledger_broken') emit('ledgerBroken')
     throw err
   }
   return data as T
@@ -63,11 +62,16 @@ function qs(params: Record<string, string | number | undefined>): string {
 export const realApi: KiraApi = {
   me: () => request<Me>('GET', '/api/me'),
   logout: () => request<void>('POST', '/auth/logout'),
-  listEntries: (f: EntryFilter = {}) =>
-    request<EntryList>('GET', `/api/entries${qs({ from: f.from, to: f.to, category: f.category, method: f.method, q: f.q, status: f.status })}`),
+  listEntries: async (f: EntryFilter = {}) => {
+    const r = await request<EntryList>('GET', `/api/entries${qs({ from: f.from, to: f.to, category: f.category, method: f.method, q: f.q, status: f.status })}`)
+    return { ...r, entries: r.entries ?? [] }
+  },
   getEntry: (id) => request<Entry>('GET', `/api/entries/${id}`),
   createEntry: (input: EntryInput) => request<AppendResult>('POST', '/api/entries', input),
-  history: (id) => request<EntryHistory>('GET', `/api/entries/${id}/history`),
+  history: async (id) => {
+    const r = await request<EntryHistory>('GET', `/api/entries/${id}/history`)
+    return { ...r, rows: r.rows ?? [] }
+  },
   amendEntry: (id, input) => request<AppendResult>('POST', `/api/entries/${id}/amend`, input),
   voidEntry: (id, input: VoidInput) => request<AppendResult>('POST', `/api/entries/${id}/void`, input),
   uploadReceipt: (file) => {
@@ -76,11 +80,16 @@ export const realApi: KiraApi = {
     return request<Receipt>('POST', '/api/receipts', undefined, form)
   },
   receiptUrl: (sha256) => `/api/receipts/${sha256}`,
-  listCategories: (includeArchived = false) =>
-    request<CategoryList>('GET', `/api/categories${includeArchived ? '?include_archived=1' : ''}`),
+  listCategories: async (includeArchived = false) => {
+    const r = await request<CategoryList>('GET', `/api/categories${includeArchived ? '?include_archived=1' : ''}`)
+    return { ...r, categories: r.categories ?? [] }
+  },
   createCategory: (input: CategoryCreate) => request<Category>('POST', '/api/categories', input),
   patchCategory: (id, input: CategoryPatch) => request<Category>('PATCH', `/api/categories/${id}`, input),
-  summary: (month) => request<Summary>('GET', `/api/summary${qs({ month })}`),
+  summary: async (month) => {
+    const r = await request<Summary>('GET', `/api/summary${qs({ month })}`)
+    return { ...r, by_category: r.by_category ?? [], trend: r.trend ?? [], recent: r.recent ?? [] }
+  },
   exportUrl: (from, to, format: ExportFormat) => `/api/export${qs({ from, to, format })}`,
   verify: () => request<VerifyResult>('GET', '/api/ledger/verify'),
   acknowledge: () => request<VerifyResult>('POST', '/api/ledger/acknowledge'),

@@ -87,7 +87,7 @@ export default function Entries() {
           </select>
         </div>
       </div>
-      <ErrorNote message={error} />
+      <ErrorNote message={error} onRetry={() => void load()} />
       {!list && !error && <Spinner />}
       {list && (
         <Card className="px-5 py-3">

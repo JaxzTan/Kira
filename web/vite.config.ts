@@ -11,6 +11,8 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     css: false,
   },
+  // CSP is default-src 'self' (no data: fonts/images): never inline assets as data: URIs.
+  build: { assetsInlineLimit: 0 },
   server: {
     port: 5173,
     strictPort: true,

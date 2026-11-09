@@ -4,8 +4,8 @@
 |---|---|---|---|
 | 0 · Scaffold + API contract | ✅ done | main only | — |
 | 1 · Core build | ✅ done | kira-ledger · kira-auth · kira-frontend · kira-ops | — |
-| 2 · Wire API + real frontend | 🟦 in progress | kira-api → kira-frontend | — |
-| 🛑 A · Google OAuth credentials | ⬜ waiting | — | **Jaxz** |
+| 2 · Wire API + real frontend | ✅ done | kira-api → kira-frontend | — |
+| 🛑 A · Google OAuth credentials | 🟦 waiting on Jaxz | — | **Jaxz** |
 | 3 · Real login + E2E | ⬜ todo | kira-tester (+ fixes) | after A |
 | 4 · Review + hardening | ⬜ todo | kira-reviewer (+ agency reviewers if installed) | — |
 | 🛑 B · Backup target (optional) | ⬜ waiting | — | **Jaxz** |
@@ -73,8 +73,9 @@ Legend: ⬜ todo · 🟦 in progress · ✅ done · ⛔ blocked
 - [x] kira-api: `bin/kira serve` and `bin/kira verify` subcommands; startup verify + head log
   - `kira serve`: startup `VerifyRecorded` (INFO `head=id:hash`, WARN on failure, read-only until acknowledged), listens on `127.0.0.1:PORT` (optional `HOST` override), slog JSON (text on a TTY), graceful SIGINT/SIGTERM shutdown, Read/Write/Idle/Header timeouts. `kira verify`: `ok entries=N head=id:hash` / `BROKEN at id=N reason=...` exit 1 (2 = config/DB error). `kira seed --n N [--force]` for backup-test.sh (refuses a non-empty or broken ledger).
   - Smoke (temp env, fake Google keys): `/api/me` 401 JSON, `/` 200 index.html, `POST /auth/test-login` 404, `/entries` 200 index.html, `/assets/*.js` immutable cache, `kira verify` → `ok entries=0 head=0:000…` exit 0.
-- [ ] kira-frontend: switch from mock to real API, error states, 401 → /login
-- [ ] `make check` green; commit `feat: core app`
+- [x] kira-frontend: switch from mock to real API, error states, 401 → /login
+  - Client: no Content-Type on bodyless POSTs, multipart for receipts, ApiError parsing, 401 → /login (no loop on /login), 403 → "This account is not allowed" screen, 423 from any write → re-verify (red banner), 429 friendly msg, network failure → inline error with Retry. Null arrays normalized. Vite `assetsInlineLimit: 0` (inlined data: fonts violated the CSP). 57 tests. Real-server walkthrough (bin/kira-e2e, headless Chromium) passed with zero CSP violations.
+- [x] `make check` green; commit `feat: core app`
 
 ## 🛑 Gate A · Google OAuth credentials (Jaxz)
 Claude posts the exact Google Cloud Console steps, then waits for **"creds ready"**.
@@ -129,5 +130,6 @@ _(subagents add notes here)_
 
 ## Log
 _(one line per phase completion)_
+- Phase 2 ✅ API wired (126 Go api/config/cli tests), frontend on real API (57 web tests), real-server walkthrough pass, CSP data:-font bug fixed
 - Phase 1 ✅ ledger (195 tests, REPLACE-bypass triggers added), auth (50/53 tests, fake OIDC), frontend (6 pages, 43 tests, mock API), ops (Makefile + deploy units)
 - Phase 0 ✅ scaffold, Tailwind theme, API contract (md + dto.go + types.ts), make check green

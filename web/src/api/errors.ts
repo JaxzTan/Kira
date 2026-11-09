@@ -18,3 +18,8 @@ export class ApiError extends Error {
 export function isApiError(e: unknown): e is ApiError {
   return e instanceof ApiError
 }
+
+/** True when the request never reached the server (retry-able). */
+export function isNetworkError(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 0
+}

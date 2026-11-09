@@ -25,15 +25,18 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
 
+  const [attempt, setAttempt] = useState(0)
+
   useEffect(() => {
     let live = true
     setError(null)
+    setData(null)
     api.summary(month).then(
       (s) => live && setData(s),
       (e) => live && setError(isApiError(e) ? e.message : 'Could not load the dashboard'),
     )
     return () => { live = false }
-  }, [month])
+  }, [month, attempt])
 
   const go = (delta: number) => setParams({ month: shiftMonth(month, delta) })
   const navBtn = 'grid h-10 w-10 cursor-pointer place-items-center rounded-control border border-border-strong bg-surface text-text hover:bg-bg'
@@ -57,7 +60,7 @@ export default function Dashboard() {
           <kbd aria-label="shortcut N" className="rounded-[6px] border border-white/50 bg-white/10 px-1.5 text-xs font-semibold">N</kbd>
         </button>
       </div>
-      <ErrorNote message={error} />
+      <ErrorNote message={error} onRetry={() => setAttempt((n) => n + 1)} />
       {!data && !error && <Spinner />}
       {data && (
         <>
@@ -86,7 +89,7 @@ export default function Dashboard() {
               <h2 className="font-display text-base font-semibold">Recent entries</h2>
               <Link to="/entries" className="text-sm font-semibold text-accent no-underline hover:underline">View all</Link>
             </div>
-            <EntriesTable entries={data.recent} compact />
+            <EntriesTable entries={data.recent} compact emptyText="No entries yet. Press N to add your first expense." />
           </Card>
         </>
       )}

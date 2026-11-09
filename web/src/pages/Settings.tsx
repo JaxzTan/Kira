@@ -6,7 +6,7 @@ import { LIMITS } from '../api/types'
 import { useMe } from '../components/auth-context'
 import { IconShield, IconShieldX } from '../components/icons'
 import { useLedger } from '../components/ledger-context'
-import { Button, Card, ErrorNote, Field, PageTitle, inputClass } from '../components/ui'
+import { Button, Card, ErrorNote, Field, PageTitle, Spinner, inputClass } from '../components/ui'
 import { relativeTime, shortDateTime, shortHash } from '../lib/dates'
 
 function CategoryRow({ cat, onChanged, onError }: { cat: Category; onChanged: () => void; onError: (m: string | null) => void }) {
@@ -60,7 +60,13 @@ export default function Settings() {
   const [error, setError] = useState<string | null>(null)
   const [verifying, setVerifying] = useState(false)
 
-  const load = useCallback(() => { api.listCategories(true).then((r) => setCats(r.categories), (e) => setError(isApiError(e) ? e.message : 'Could not load categories')) }, [])
+  const [catsLoaded, setCatsLoaded] = useState(false)
+  const load = useCallback(() => {
+    api.listCategories(true).then(
+      (r) => { setCats(r.categories); setCatsLoaded(true); setError(null) },
+      (e) => { setCatsLoaded(true); setError(isApiError(e) ? e.message : 'Could not load categories') },
+    )
+  }, [])
   useEffect(load, [load])
 
   async function add(e: FormEvent) {
@@ -90,7 +96,9 @@ export default function Settings() {
       <div className="grid grid-cols-[repeat(auto-fit,minmax(360px,1fr))] items-start gap-5">
         <Card>
           <h2 className="mb-3 font-display text-base font-semibold">Categories</h2>
-          <ErrorNote message={error} />
+          <ErrorNote message={error} onRetry={load} />
+          {!catsLoaded && <Spinner />}
+          {catsLoaded && cats.length === 0 && !error && <p className="mb-4 text-sm text-text-muted">No categories yet. Add one below.</p>}
           <ul className="m-0 mb-4 list-none p-0">
             {cats.map((c) => <CategoryRow key={`${c.id}-${c.name}-${c.archived_at}`} cat={c} onChanged={load} onError={setError} />)}
           </ul>

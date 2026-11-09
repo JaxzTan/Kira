@@ -207,7 +207,7 @@ export default function EntryDetail() {
     return (
       <>
         <Crumb id={id} />
-        <ErrorNote message={error} />
+        <ErrorNote message={error} onRetry={() => void load()} />
       </>
     )
   }

@@ -52,9 +52,18 @@ export function PageTitle({ children, right }: { children: ReactNode; right?: Re
   )
 }
 
-export function ErrorNote({ message }: { message: string | null }) {
+export function ErrorNote({ message, onRetry }: { message: string | null; onRetry?: () => void }) {
   if (!message) return null
-  return <p role="alert" className="rounded-control border border-danger/30 bg-red-50 px-3 py-2 text-sm text-danger">{message}</p>
+  return (
+    <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-control border border-danger/30 bg-red-50 px-3 py-2 text-sm text-danger">
+      <span>{message}</span>
+      {onRetry && (
+        <button type="button" onClick={onRetry} className="cursor-pointer rounded-control border border-danger bg-white px-3 py-1 text-sm font-semibold text-danger hover:bg-red-100">
+          Retry
+        </button>
+      )}
+    </div>
+  )
 }
 
 export function Spinner({ label = 'Loading…' }: { label?: string }) {

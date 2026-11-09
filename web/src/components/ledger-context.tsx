@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
-import { api } from '../api'
+import { api, subscribe } from '../api'
 import type { VerifyResult } from '../api/types'
 
 interface LedgerCtx {
@@ -31,6 +31,9 @@ export function LedgerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh()
   }, [refresh, pathname])
+
+  // Any write that returns 423 ledger_broken: re-verify so the red banner appears.
+  useEffect(() => subscribe('ledgerBroken', () => { void refresh() }), [refresh])
 
   const value = useMemo(() => ({ verify, failed, refresh, acknowledge }), [verify, failed, refresh, acknowledge])
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

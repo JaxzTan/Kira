@@ -3,6 +3,7 @@ import { IconGoogle, IconLock } from '../components/icons'
 const MOCK = import.meta.env.VITE_MOCK_API === '1'
 
 export default function Login() {
+  const denied = new URLSearchParams(window.location.search).get('error') === 'forbidden'
   return (
     <main className="on-dark grid min-h-full place-items-center bg-sidebar p-6 text-text-on-dark">
       <div className="w-full max-w-[420px]">
@@ -11,6 +12,7 @@ export default function Login() {
         <p className="mb-8 text-[17px] leading-relaxed text-text-on-dark-muted">
           Business expenses, recorded the moment they happen. Append-only. Yours only.
         </p>
+        {denied && <p role="alert" className="mb-4 rounded-control border border-white/30 p-3 text-sm">This account is not allowed.</p>}
         <a
           href={MOCK ? '/' : '/auth/google/login'}
           className="flex h-[52px] items-center justify-center gap-3 rounded-control bg-white text-[15px] font-semibold text-text no-underline hover:bg-gray-100"
